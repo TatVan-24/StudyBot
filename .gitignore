@@ -1,0 +1,107 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python caches, tests, coverage and packaging
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Local runtime data
+_data/
+uploads/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Local RAG artifacts and model weights
+vector_store/
+vector_index/
+models/
+checkpoints/
+*.faiss
+*.index
+*.gguf
+*.safetensors
+*.onnx
+
+# Node/frontend artifacts
+node_modules/
+.vite/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# AWS CDK, SAM and serverless artifacts
+cdk.out/
+.aws-sam/
+.serverless/
+samconfig.toml
+
+# Terraform state and local configuration
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+
+# Private design notes
+idea/
+
+# Legacy XBrain/W7 repository material kept locally for reference
+src/.gitignore
+src/GUIDELINE.md
+src/README.md
+src/starter_apps/
+src/sample_data/
