@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#111827">
+  <title>StudyBot — Learn from your own notes</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="auth-view" class="auth-view"><div class="auth-overlay"></div>
+    <section class="auth-shell" aria-label="StudyBot authentication">
+      <div class="auth-story"><a class="brand brand-light" href="#"><span class="brand-mark">S</span><span>Study<span>Bot</span></span></a><div><span class="eyebrow">Your personal AI study coach</span><h1>Turn your notes into knowledge that sticks.</h1><p>Upload lectures, ask grounded questions, and build a study routine around your own material.</p></div><div class="auth-features"><span>Grounded answers</span><span>Source citations</span><span>Private workspace</span></div></div>
+      <div class="auth-card">
+        <div class="auth-card-heading"><div class="mobile-brand"><span class="brand-mark">S</span> Study<span>Bot</span></div><h2 id="auth-title">Welcome back</h2><p id="auth-subtitle">Sign in to continue your learning journey.</p></div>
+        <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button" onclick="setAuthMode('login')">Log in</button><button id="register-tab" class="auth-tab" type="button" onclick="setAuthMode('register')">Register</button></div>
+        <div id="auth-message" class="form-message" role="alert"></div>
+        <form id="auth-form" onsubmit="submitAuth(event)">
+          <label id="name-field" class="field hidden"><span>Full name</span><input id="auth-name" type="text" autocomplete="name" placeholder="Alex Morgan"></label>
+          <label class="field"><span>Email address</span><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required></label>
+          <label class="field"><span>Password</span><span class="password-wrap"><input id="auth-password" type="password" autocomplete="current-password" placeholder="At least 8 characters" minlength="8" required><button class="password-toggle" type="button" onclick="togglePassword()">Show</button></span></label>
+          <label id="confirm-field" class="field hidden"><span>Confirm password</span><input id="auth-confirm" type="password" autocomplete="new-password" placeholder="Repeat your password" minlength="8"></label>
+          <div id="login-options" class="form-options"><label class="check"><input id="remember-me" type="checkbox" checked> Remember me</label><button class="text-button" type="button" onclick="showAuthMessage('Password recovery will be connected with Cognito later.', 'info')">Forgot password?</button></div>
+          <button id="auth-submit" class="button button-primary button-wide" type="submit">Log in</button><button id="demo-login" class="button button-secondary button-wide" type="button" onclick="demoLogin()">Continue with demo account</button>
+        </form><p class="auth-note">Local preview only. Production authentication will use Amazon Cognito.</p>
+      </div>
+    </section>
+  </div>
+
+  <div id="app-view" class="app-view hidden">
+    <aside id="sidebar" class="sidebar"><div class="sidebar-brand"><a class="brand" href="#"><span class="brand-mark">S</span><span>Study<span>Bot</span></span></a><button class="icon-button mobile-only" type="button" onclick="toggleSidebar()">×</button></div>
+      <nav class="nav-list"><button class="nav-item active"><span>⌂</span>Workspace</button><button class="nav-item" onclick="document.querySelector('.library-panel').scrollIntoView({behavior:'smooth'})"><span>▤</span>My library</button><button class="nav-item" onclick="toast('Learning progress is planned for the next iteration.', 'info')"><span>◫</span>Progress</button></nav>
+      <div class="sidebar-card"><strong>Study smarter</strong><p>Upload a note and ask questions grounded in its content.</p><span id="backend-state" class="backend-state">Checking backend…</span></div>
+      <button class="user-card" type="button" onclick="logout()"><span id="user-avatar" class="avatar">D</span><span><strong id="user-name">Demo Student</strong><small id="user-email">demo@studybot.local</small></span><span class="logout-icon">↪</span></button>
+    </aside><div id="sidebar-scrim" class="sidebar-scrim" onclick="toggleSidebar()"></div>
+    <div class="app-content">
+      <header class="topbar"><div class="topbar-title"><button class="icon-button mobile-only" type="button" onclick="toggleSidebar()">☰</button><div><span class="eyebrow dark">Personal learning workspace</span><h1>Good to see you, <span id="greeting-name">Student</span>.</h1></div></div><div id="status-pills" class="status-pills"><span class="status-pill"><i class="spinner"></i> Connecting</span></div></header>
+      <main class="dashboard">
+        <section class="hero-panel"><div><span class="eyebrow">Study with your own material</span><h2>What would you like to learn today?</h2><p>Bring your lecture notes. StudyBot will turn them into a searchable learning workspace.</p></div><div class="hero-stats"><div><strong id="document-count">0</strong><span>Documents</span></div><div><strong id="query-count">0</strong><span>Questions</span></div></div></section>
+        <div class="dashboard-grid">
+          <section class="panel"><div class="panel-heading"><div><span class="section-kicker">Step 01</span><h2>Add study material</h2></div><span class="panel-meta">PDF · TXT · MD</span></div><label id="drop" class="dropzone"><span class="upload-icon">↑</span><strong>Drop your lecture here</strong><p>or <span>browse files</span> from your computer</p><small>Maximum recommended size: 10 MB</small><input id="file" type="file" accept=".pdf,.txt,.md"></label><div id="upload-result"></div></section>
+          <section class="panel"><div class="panel-heading"><div><span class="section-kicker">Step 02</span><h2>Ask your notes</h2></div><span class="panel-meta">Answers with citations</span></div><div class="question-box"><textarea id="question" rows="4" placeholder="Ask a question about your uploaded material…"></textarea><div class="question-actions"><span>Press Ctrl + Enter to send</span><button id="ask-btn" class="button button-primary" type="button" onclick="ask()">Ask StudyBot</button></div></div><div id="answer-card" class="answer-card"><div class="answer-label"><span class="brand-mark small">S</span>StudyBot answer</div><div id="answer-text" class="answer-text"></div><div id="citations" class="citations"></div></div></section>
+        </div>
+        <section class="panel library-panel"><div class="panel-heading"><div><span class="section-kicker">Library</span><h2>Your documents</h2></div><button class="button button-secondary compact" type="button" onclick="refreshDocuments()">Refresh</button></div><div id="docs" class="doc-list"><div class="empty-state"><strong>Your library is empty</strong><span>Upload a document to start learning.</span></div></div></section>
+        <details class="debug-panel"><summary>Developer diagnostics</summary><pre id="debug-log">No requests yet.</pre></details>
+      </main>
+    </div>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div><script src="/static/app.js"></script>
+</body></html>
