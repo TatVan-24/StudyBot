@@ -51,6 +51,11 @@ checkpoints/
 *.safetensors
 *.onnx
 
+# Private evaluation inputs and per-run artifacts
+evaluation/corpus/manifest.local.jsonl
+evaluation/runs/*.jsonl
+!evaluation/runs/.gitkeep
+
 # Node/frontend artifacts
 node_modules/
 .vite/
