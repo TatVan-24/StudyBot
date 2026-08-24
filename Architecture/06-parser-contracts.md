@@ -1,0 +1,810 @@
+# Parser Contracts
+
+## 1. Purpose and status
+
+This document defines the boundary of the complete StudyBot Parser subsystem: what a parse job receives, which artifacts it produces, how source provenance is preserved, and how completion or partial failure is reported. A parser identifies, extracts, locates, and preserves source content; it does not use AI to interpret images, transcribe media, resolve external links, or generate answers.
+
+| Profile | Status |
+|---|---|
+| Common Parser subsystem | Frozen v1 — amended with unified `source_order` |
+| Common `ParsedBlock` | Accepted v1 foundation; native text only |
+| `pdf_book_v1` | Frozen v1 |
+| `pptx_v1` | Frozen v1 |
+| `docx_v1` | Frozen v1 |
+| `markdown_v1` | Frozen v1 |
+| `txt_v1` | Frozen v1 |
+
+```mermaid
+flowchart LR
+    C[Corpus Manifest] --> R[ParseRequest]
+    R --> P[Format Parser]
+    P --> M[ParseManifest]
+    P --> B[ParsedBlock JSONL]
+    P --> A[AssetRecord JSONL]
+    P --> L[LinkRecord JSONL]
+    P --> I[ParseIssue JSONL]
+
+    B --> CH[Chunker]
+    A --> E[Multimodal Enricher]
+    L --> RE[Link Resolver]
+    M --> O[Monitoring and reproducibility]
+    I --> O
+```
+
+The parser extracts and normalizes source content. It must not infer answers, summarize facts, write a vision-generated description, crawl a URL, or rewrite a multiple-choice item into a declarative answer.
+
+## 2. ParseRequest
+
+`ParseRequest` is the deterministic input contract for a format parser. The binary source remains in local storage or S3; it is referenced by URI and is not embedded in the request.
+
+```json
+{
+  "schema_version": "1.0",
+  "parse_job_id": "parse_job_001",
+  "document_id": "pptx_nlp_001",
+  "source_type": "pptx",
+  "parser_profile": "pptx_v1",
+  "source": {
+    "uri": "local://corpus/pptx_nlp_001.pptx",
+    "file_name": "Day-6 Natural Language Processing.pptx",
+    "media_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "sha256": "sha256:TBD"
+  }
+}
+```
+
+Required invariants:
+
+- Required fields are `schema_version`, `parse_job_id`, `document_id`, `source_type`, `parser_profile`, `source.uri`, `source.file_name`, `source.media_type`, and `source.sha256`.
+- `document_id` exists in the corpus manifest.
+- `source_type` agrees with the selected `parser_profile` and detected media type.
+- `source.sha256` identifies the exact source version used by this parse run.
+- The parser must reject an unsupported profile instead of silently selecting a fallback profile.
+
+## 3. ParseBundle output
+
+`ParseBundle` is a logical bundle, not one large in-memory JSON object. One parse job produces the following artifact layout:
+
+```text
+parsed/{document_id}/{parse_job_id}/
+├── manifest.json
+├── blocks.jsonl
+├── assets.jsonl
+├── links.jsonl
+├── issues.jsonl
+└── assets/
+    └── extracted binary files
+```
+
+Downstream ownership is explicit:
+
+```text
+blocks.jsonl   → Chunker
+assets.jsonl   → Multimodal Enricher
+links.jsonl    → Link Resolver
+manifest.json  → Monitoring and reproducibility
+issues.jsonl   → Monitoring and debugging
+```
+
+Writers must publish a bundle atomically: incomplete temporary artifacts must not be exposed as a completed bundle, and `manifest.json` is finalized only after the artifact counts and checksums are known.
+
+## 4. ParseManifest
+
+```json
+{
+  "schema_version": "1.0",
+  "contract_version": "1.0",
+  "parse_job_id": "parse_job_001",
+  "document_id": "pptx_nlp_001",
+  "source_sha256": "sha256:TBD",
+  "parser_profile": "pptx_v1",
+  "status": "PARTIAL",
+  "parser": {
+    "name": "python-pptx",
+    "version": "TBD"
+  },
+  "artifacts": {
+    "blocks": {
+      "path": "blocks.jsonl",
+      "sha256": "sha256:TBD",
+      "record_count": 120
+    },
+    "assets": {
+      "path": "assets.jsonl",
+      "sha256": "sha256:TBD",
+      "record_count": 8
+    },
+    "links": {
+      "path": "links.jsonl",
+      "sha256": "sha256:TBD",
+      "record_count": 3
+    },
+    "issues": {
+      "path": "issues.jsonl",
+      "sha256": "sha256:TBD",
+      "record_count": 2
+    }
+  }
+}
+```
+
+Each artifact descriptor is the single source of truth for its path, record count, and checksum. Bundle integrity is valid only when the actual JSONL record count equals `record_count` and the artifact hash equals `sha256`. Top-level duplicate counts are forbidden.
+
+Status semantics are scoped to Parser responsibilities:
+
+```text
+COMPLETED
+→ all content required by parser_profile was detected, extracted, located, and preserved
+
+PARTIAL
+→ usable output exists, but content required by parser_profile was lost or could not be extracted
+
+FAILED
+→ no sufficiently reliable representation was produced
+```
+
+An image extracted successfully but not yet interpreted by a Vision model does not make parsing `PARTIAL`. For example, an extracted chart may yield `COMPLETED`; unsupported SmartArt required by the profile yields `PARTIAL + UNSUPPORTED_SMARTART`.
+
+Final status is derived deterministically from `ParseIssue.impact`:
+
+```text
+any FATAL issue        → FAILED
+else any CONTENT_LOSS  → PARTIAL
+else                   → COMPLETED
+```
+
+## 5. Common ParsedBlock envelope
+
+`ParsedBlock` contains native textual content that the source parser can read directly. It does not represent an image, chart, audio, video, attachment, or hyperlink.
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "pdf_dmls_001",
+  "block_id": "pdf_dmls_001_b0124",
+  "source_type": "pdf",
+  "block_index": 124,
+  "source_order": 124,
+  "block_type": "paragraph",
+  "text": "...",
+  "heading_path": [],
+  "locator": {},
+  "metadata": {}
+}
+```
+
+Common invariants:
+
+- `block_id` is unique within one ParseBundle.
+- Record IDs are deterministic when `source_sha256`, `parser_profile`, parser name/version, and `contract_version` are unchanged. `parse_job_id` does not participate in record-ID generation, so an identical rerun produces identical record IDs.
+- Record IDs are not guaranteed to remain stable when the source, profile, parser version, or contract version changes. This rule also applies to `asset_id`, `link_id`, and `issue_id`.
+- All human-facing indices are 1-based.
+- `source_order` is required on flow-bearing `ParsedBlock` and `AssetRecord` records. It provides one 1-based ordering namespace across the separate `blocks.jsonl` and `assets.jsonl` artifacts.
+- `source_order` is unique among flow-bearing records in one ParseBundle. A link or issue references its source record/locator and does not consume a separate order position.
+- Format profiles define how native objects receive `source_order`; downstream code reconstructs source flow by merging blocks and assets on this field.
+- `text` preserves source meaning; normalization may fix whitespace but must not generate new facts.
+- `heading_path` is always present, ordered root-to-leaf, and may be `[]` when no reliable heading exists.
+- Heading levels increase from parent to child. The final item is the nearest reliable heading containing the block.
+- Document title is stored in the corpus manifest and is not repeated in every `heading_path`.
+- A chunk stores `source_block_ids`; locators remain owned by the referenced parsed blocks.
+
+Allowed initial `block_type` values are:
+
+```text
+title
+heading
+paragraph
+list_item
+table_row
+caption
+code_block
+quote
+```
+
+Normalized heading form:
+
+```json
+{
+  "level": 2,
+  "role": "chapter",
+  "text": "Data Engineering Fundamentals"
+}
+```
+
+Initial heading roles are `chapter`, `section`, `subsection`, and `slide`. A parser must not promote ordinary text to a heading when the source structure is uncertain.
+
+## 6. Common AssetRecord
+
+`AssetRecord` preserves non-text source content without claiming to understand it. Binary data is stored under `assets/`; JSONL stores identity, provenance, native context, checksum, and extraction status.
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "pptx_nlp_001",
+  "asset_id": "pptx_nlp_001_a0001",
+  "source_order": 44,
+  "asset_type": "chart",
+  "media_type": "image/png",
+  "locator": {
+    "type": "pptx",
+    "slide": 4,
+    "shape_index": 5,
+    "bounding_box": null
+  },
+  "native_context": {
+    "alt_text": null,
+    "caption": "Model performance",
+    "related_block_ids": [
+      "pptx_nlp_001_b0043"
+    ]
+  },
+  "extraction": {
+    "status": "EXTRACTED",
+    "storage_uri": "local://parsed/pptx_nlp_001/assets/asset_001.png",
+    "sha256": "sha256:TBD"
+  }
+}
+```
+
+Initial asset types are `image`, `chart`, `diagram`, `audio`, `video`, `smartart`, `embedded_object`, and `attachment`. Extraction status is `EXTRACTED`, `DETECTED_ONLY`, or `FAILED`. Only native caption/alt text may be recorded here; OCR, Vision, ASR, chart interpretation, and other generated descriptions belong to Multimodal Enrichment.
+
+Conditional requirements:
+
+```text
+EXTRACTED
+→ extraction.storage_uri REQUIRED
+→ extraction.sha256 REQUIRED
+
+DETECTED_ONLY
+→ extraction.storage_uri absent
+→ extraction.sha256 absent
+
+FAILED
+→ extraction.storage_uri absent
+→ extraction.sha256 absent
+→ at least one related ParseIssue REQUIRED
+```
+
+An `AssetRecord` in `FAILED` state still preserves its identity and physical locator. These conditions must be encoded with conditional JSON Schema rules when schemas are implemented.
+
+## 7. Common LinkRecord
+
+One link record represents one source occurrence, even when the same URL appears multiple times.
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "md_interview_001",
+  "link_id": "md_interview_001_l0001",
+  "url": "https://example.com/reference",
+  "anchor_text": "Reference architecture",
+  "link_type": "external",
+  "source_block_id": "md_interview_001_b0042",
+  "source_asset_id": null,
+  "locator": {
+    "type": "markdown",
+    "start_line": 120,
+    "end_line": 120
+  },
+  "resolution": {
+    "status": "NOT_RESOLVED"
+  }
+}
+```
+
+Initial link types are `internal_anchor`, `local_file`, `external`, and `embedded_attachment`. Parser validation may classify a link and preserve its source occurrence, but network fetching, crawling, redirects, and content snapshots belong to Link Resolver.
+
+Cross-record reference invariants:
+
+- `locator` is required for every source occurrence.
+- At least one of `source_block_id` or `source_asset_id` is required.
+- A text hyperlink normally references `source_block_id`; an image or shape hyperlink normally references `source_asset_id`.
+- Both references may be present when a source link is semantically attached to an asset and its native caption block.
+- Referenced IDs must exist in the same ParseBundle.
+
+## 8. Common ParseIssue
+
+```json
+{
+  "schema_version": "1.0",
+  "issue_id": "pptx_nlp_001_i0001",
+  "document_id": "pptx_nlp_001",
+  "severity": "WARNING",
+  "impact": "CONTENT_LOSS",
+  "code": "UNSUPPORTED_SMARTART",
+  "message": "SmartArt was detected but its semantics were not extracted.",
+  "locator": {
+    "type": "pptx",
+    "slide": 18,
+    "shape_index": 4
+  },
+  "related_record_id": "pptx_nlp_001_a0007",
+  "recoverable": true
+}
+```
+
+Severity is `INFO`, `WARNING`, or `ERROR` and controls logging or alerting. Impact is `NONE`, `CONTENT_LOSS`, or `FATAL` and controls ParseManifest status. Severity alone must never determine parse status.
+
+```text
+INFO/WARNING/ERROR + NONE
+→ does not lower status
+
+any severity + CONTENT_LOSS
+→ PARTIAL unless another issue is FATAL
+
+any severity + FATAL
+→ FAILED
+```
+
+Issues are centralized here instead of being embedded inconsistently in individual format records. A `FAILED` parse must still publish a failure manifest and at least one `FATAL` issue when artifact publication itself remains possible.
+
+## 9. PDF book profile — frozen v1
+
+For `pdf_book_v1`, the physical PDF page and printed page are both required. `printed_page` may be an integer or a string such as a Roman-numeral label. Unnumbered front matter does not produce searchable blocks in this profile.
+
+Required locator fields:
+
+```text
+type = pdf
+pdf_page: integer >= 1
+printed_page: integer | string
+bounding_box: object | null
+```
+
+If a content page has no resolved printed page, parsing is `PARTIAL` with warning `MISSING_PRINTED_PAGE`; the parser must not silently write `null`.
+
+### PDF example
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "pdf_dmls_001",
+  "block_id": "pdf_dmls_001_b0124",
+  "source_type": "pdf",
+  "block_index": 124,
+  "source_order": 124,
+  "block_type": "paragraph",
+  "text": "Another source is system-generated data. This is the data generated by different components of your systems.",
+  "heading_path": [
+    {
+      "level": 2,
+      "role": "chapter",
+      "text": "Data Engineering Fundamentals"
+    },
+    {
+      "level": 3,
+      "role": "section",
+      "text": "Data Sources"
+    }
+  ],
+  "locator": {
+    "type": "pdf",
+    "pdf_page": 70,
+    "printed_page": 50,
+    "bounding_box": null
+  },
+  "metadata": {
+    "parser_name": "pymupdf",
+    "parser_version": "TBD",
+    "language": "en"
+  }
+}
+```
+
+### PDF object mapping
+
+| Native PDF object | Common record | Mapping rule |
+|---|---|---|
+| Heading, paragraph, list, caption, table text | `ParsedBlock` | Preserve native text, normalized heading hierarchy, physical and printed page |
+| Raster image | `AssetRecord(asset_type=image)` | Extract binary when possible; retain page and bounding box |
+| Native chart object | `AssetRecord(asset_type=chart)` | Use `chart` only when the source object exposes native chart structure |
+| Vector figure/diagram | `AssetRecord(asset_type=diagram)` | Render the detected region when possible; do not interpret its semantics |
+| Audio or video | `AssetRecord(asset_type=audio|video)` | Extract embedded binary when supported |
+| Embedded file | `AssetRecord(asset_type=attachment|embedded_object)` | Preserve original media type, binary hash, and locator |
+| URI annotation or hyperlink | `LinkRecord` | Preserve each source occurrence without fetching it |
+
+PDF-specific invariants:
+
+- A figure caption remains a native `ParsedBlock(block_type=caption)` and is connected to the figure through `related_block_ids`.
+- Surrounding paragraphs remain independent blocks; the parser must not merge an AI-generated description into them.
+- A raster image that visually contains a chart remains `asset_type=image`. Semantic reclassification belongs to Multimodal Enrichment.
+- A vector figure successfully rendered to an asset is `EXTRACTED`; a detected figure that cannot be rendered or grouped is `DETECTED_ONLY` with a related issue.
+- Required figure content that cannot be preserved produces `impact=CONTENT_LOSS` and therefore a `PARTIAL` parse.
+- `bounding_box` is required for a cropped or detected figure region and may remain `null` only when the asset applies to the full physical page.
+- PDF URLs, embedded media, and attachments use the same `pdf_page`, `printed_page`, and bounding-box provenance model as text and figures.
+
+Example source mapping:
+
+```text
+paragraph before Figure 3-7 → ParsedBlock
+Figure 3-7 caption          → ParsedBlock(type=caption)
+Figure 3-7 diagram          → AssetRecord(type=diagram)
+hyperlink in caption        → LinkRecord(source_block_id=caption block)
+```
+
+## 10. PPTX profile — frozen v1
+
+A slide is a container and source location. A logical title, paragraph, list item, table row, or caption is a `ParsedBlock`; a whole slide is not flattened into one block.
+
+Required behavior:
+
+- `slide`, `shape_index`, `paragraph_index`, `source_order`, `table_row`, and `column` are 1-based where applicable.
+- Slide title is represented with heading role `slide`.
+- A reliable intra-slide heading may extend `heading_path` with role `section`; uncertain textbox text remains a paragraph.
+- `bullet_level` is required for `list_item`; its outermost value is `0` because it represents nesting depth rather than a human-facing index.
+- A table row retains explicit column positions.
+- Speaker notes, image OCR, SmartArt semantics, and chart interpretation are deferred.
+
+### PPTX example
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "pptx_nlp_001",
+  "block_id": "pptx_nlp_001_b0043",
+  "source_type": "pptx",
+  "block_index": 43,
+  "source_order": 43,
+  "block_type": "list_item",
+  "text": "Java",
+  "heading_path": [
+    {
+      "level": 2,
+      "role": "slide",
+      "text": "Natural Language Processing"
+    },
+    {
+      "level": 3,
+      "role": "section",
+      "text": "Artificial Languages"
+    }
+  ],
+  "locator": {
+    "type": "pptx",
+    "slide": 4,
+    "shape_index": 3,
+    "paragraph_index": 1,
+    "bounding_box": null
+  },
+  "metadata": {
+    "parser_name": "python-pptx",
+    "parser_version": "TBD",
+    "language": "en",
+    "bullet_level": 0
+  }
+}
+```
+
+Table cells use explicit column positions:
+
+```json
+"cells": [
+  {"column": 1, "text": "S3 Glacier"},
+  {"column": 2, "text": "Retrieve takes hours"},
+  {"column": 3, "text": "Compliance archive"}
+]
+```
+
+PPTX partial-parse warnings include `NO_EXTRACTABLE_TEXT`, `UNSUPPORTED_SMARTART`, `UNSUPPORTED_CHART`, and `INVALID_READING_ORDER`. A missing slide title is not an error; its `heading_path` may be empty.
+
+### PPTX object mapping
+
+| Native PPTX object | Common record | Mapping rule |
+|---|---|---|
+| Title, textbox paragraph, bullet, caption | `ParsedBlock` | Preserve logical text unit, slide provenance, source order, and bullet hierarchy |
+| Table | `ParsedBlock(block_type=table_row)` | Preserve explicit 1-based column positions in `metadata.cells` |
+| Raster image | `AssetRecord(asset_type=image)` | Extract the image binary and retain slide, shape, and bounding box |
+| Native PowerPoint chart | `AssetRecord(asset_type=chart)` | Preserve native chart identity without interpreting its trend or meaning |
+| Grouped shapes/connectors | `AssetRecord(asset_type=diagram)` | Render/group when possible while preserving native text labels as blocks |
+| SmartArt | `AssetRecord(asset_type=smartart)` | Extract/render when supported; otherwise retain `DETECTED_ONLY` provenance |
+| Audio, video, embedded object | `AssetRecord` | Extract binary when supported and retain native media type |
+| Text/image/shape hyperlink | `LinkRecord` | Reference the originating block or asset and retain physical locator |
+
+PPTX-specific invariants:
+
+- Slide is a provenance container; logical title, paragraph, bullet, table row, and caption are separate blocks.
+- `asset_type` is based on the native PPTX object, not visual meaning inferred from pixels.
+- Native text labels within a diagram may remain `ParsedBlock` records while the complete spatial diagram is also preserved as one `AssetRecord`.
+- A hyperlink in text references `source_block_id`; a hyperlink attached to an image or shape references `source_asset_id`. Both may be present when appropriate.
+- `related_block_ids` connect an asset to its native caption, title, bullets, or other surrounding text on the same slide.
+- An asset extracted but not yet processed by Vision/OCR remains compatible with `COMPLETED`.
+- A required SmartArt/vector diagram that cannot be preserved yields `DETECTED_ONLY`, a related `ParseIssue(impact=CONTENT_LOSS)`, and `PARTIAL`.
+- `NO_SLIDE_TITLE` has `impact=NONE`; an empty heading path is valid.
+
+Example source mapping:
+
+```text
+slide title                 → ParsedBlock(type=title)
+native bullets              → ParsedBlock(type=list_item)
+embedded PNG graph          → AssetRecord(type=image)
+native PowerPoint chart     → AssetRecord(type=chart)
+grouped shapes/connectors   → AssetRecord(type=diagram)
+caption below an image      → ParsedBlock(type=caption)
+clickable image URL         → LinkRecord(source_asset_id=...)
+```
+
+### Legacy PowerPoint boundary
+
+Binary `.ppt` is not supported by `pptx_v1`:
+
+```text
+.ppt without an approved converter
+→ FAILED
+→ ParseIssue(code=UNSUPPORTED_LEGACY_PPT, impact=FATAL)
+```
+
+A future conversion workflow is a separate ingestion step:
+
+```text
+source .ppt
+→ convert to immutable .pptx snapshot
+→ retain source SHA-256 and converted-artifact SHA-256
+→ submit a new ParseRequest using pptx_v1
+```
+
+## 11. DOCX profile — frozen v1
+
+`docx_v1` preserves the interleaving of paragraphs, tables, and assets. The parser must traverse `w:body` children in XML document order. Separately iterating `document.paragraphs` and `document.tables` is non-conforming because it loses their relative positions.
+
+### Unified source order
+
+The parser assigns one monotonically increasing `source_order` across flow-bearing blocks and assets:
+
+```text
+w:p paragraph        → ParsedBlock source_order=1
+w:tbl row 1          → ParsedBlock source_order=2
+w:tbl row 2          → ParsedBlock source_order=3
+w:p containing image → AssetRecord source_order=4
+next w:p paragraph   → ParsedBlock source_order=5
+```
+
+An otherwise empty paragraph containing an image does not create an empty block. A paragraph containing both native text and an image creates both records in run order. `paragraph_index`, `run_index`, `table_index`, `row_index`, and `column_index` are physical 1-based locators; they are not substitutes for `source_order`.
+
+### Paragraph and logical-block policy
+
+One non-empty Word paragraph produces one `ParsedBlock`. The parser must not merge adjacent paragraphs merely because they appear related. A table cell may contain multiple paragraphs; their text and internal order are preserved in the row's cell representation. Grouping a question, options, and answer into a higher-level unit belongs to deterministic normalization or chunking.
+
+Headings are derived only from reliable Word paragraph style or outline-level metadata and normalized into `heading_path`. Bold or enlarged text alone must not be promoted to a heading.
+
+### Table and merged-cell policy
+
+One logical table row produces one `ParsedBlock(block_type=table_row)`. `metadata.cells` preserves the logical grid:
+
+```json
+"cells": [
+  {
+    "column_start": 1,
+    "column_end": 2,
+    "row_start": 1,
+    "row_end": 1,
+    "text": "Question",
+    "merge_origin": true
+  },
+  {
+    "column_start": 3,
+    "column_end": 3,
+    "row_start": 1,
+    "row_end": 1,
+    "text": "Answer",
+    "merge_origin": true
+  }
+]
+```
+
+Horizontal merges (`w:gridSpan`) expand `column_end`; vertical merges (`w:vMerge`) expand `row_end` on the origin cell. Continuation cells must not duplicate origin text. If merge topology cannot be reconstructed reliably, the parser preserves recoverable text and emits `INVALID_TABLE_MERGE` with `impact=CONTENT_LOSS`.
+
+### DOCX object mapping
+
+| Native DOCX object | Common record | Mapping rule |
+|---|---|---|
+| Heading, paragraph, list item, caption | `ParsedBlock` | Preserve native text, structure, physical locator, and source order |
+| Table row/cells | `ParsedBlock(block_type=table_row)` | Preserve cell grid, paragraph order, and merged-cell spans |
+| Raster image | `AssetRecord(asset_type=image)` | Follow its OOXML relationship and extract the original binary |
+| Native Word drawing/grouped shapes | `AssetRecord(asset_type=diagram)` | Preserve or render when supported without interpreting semantics |
+| Chart/SmartArt | `AssetRecord(asset_type=chart|smartart)` | Type from native OOXML object; extract or retain detected-only provenance |
+| Embedded object/file | `AssetRecord(asset_type=embedded_object|attachment)` | Preserve relationship, media type, and binary when supported |
+| Text/image hyperlink | `LinkRecord` | Preserve each occurrence and reference its source block or asset |
+
+Asset locator baseline:
+
+```json
+{
+  "type": "docx",
+  "body_child_index": 4,
+  "paragraph_index": 12,
+  "run_index": 2,
+  "relationship_id": "rId8"
+}
+```
+
+The parser follows `relationship_id` through the DOCX relationship part to a target such as `word/media/image3.png`. A diagram inserted as PNG/JPEG remains `asset_type=image`; semantic reclassification belongs to Multimodal Enrichment.
+
+External references remain native paragraph/list-item blocks plus one `LinkRecord` per hyperlink occurrence. The Parser does not fetch URLs. Missing or malformed relationships emit a `ParseIssue`; loss of required content uses `impact=CONTENT_LOSS`.
+
+### DOCX example
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "docx_review_001",
+  "block_id": "docx_review_001_b0009",
+  "source_type": "docx",
+  "block_index": 9,
+  "source_order": 9,
+  "block_type": "table_row",
+  "text": "Q5 ___ are general computers that can learn algorithms to map input sequences to output sequences? A. CNN B. LSTM C. RNN D. None of these",
+  "heading_path": [],
+  "locator": {
+    "type": "docx",
+    "body_child_index": 1,
+    "table_index": 1,
+    "row_index": 5
+  },
+  "metadata": {
+    "parser_name": "python-docx",
+    "parser_version": "TBD",
+    "language": "en",
+    "cells": [
+      {
+        "column_start": 1,
+        "column_end": 1,
+        "row_start": 5,
+        "row_end": 5,
+        "text": "Q5 ___ are general computers that can learn algorithms to map input sequences to output sequences? A. CNN B. LSTM C. RNN D. None of these",
+        "merge_origin": true
+      }
+    ]
+  }
+}
+```
+
+DOCX-specific issues include `INVALID_READING_ORDER`, `INVALID_TABLE_MERGE`, `BROKEN_RELATIONSHIP`, `UNSUPPORTED_WORD_DRAWING`, and `UNSUPPORTED_EMBEDDED_OBJECT`.
+
+## 12. Common text-source locator
+
+`markdown_v1` and `txt_v1` share the same physical line-span convention but remain separate parser profiles:
+
+```json
+{
+  "start_line": 120,
+  "end_line": 124
+}
+```
+
+Both indices are required, 1-based, inclusive, and refer to the decoded source snapshot identified by `source.sha256`. `end_line` must be greater than or equal to `start_line`. A source-version or decoding change requires regenerated locators.
+
+Shared implementation utilities may normalize whitespace, create line locators and records, and detect language. They must not erase the distinction between syntax-driven Markdown parsing and conservative line-driven TXT parsing.
+
+## 13. Markdown profile — frozen v1
+
+`markdown_v1` parses a Markdown syntax tree rather than inferring structure from visual appearance. Heading hierarchy, paragraphs, lists, fenced code, block quotes, tables, links, and image references are mapped from explicit syntax.
+
+### Markdown mapping
+
+| Markdown node | Common record | Mapping rule |
+|---|---|---|
+| ATX/setext heading | `ParsedBlock(block_type=heading)` | Preserve explicit level and update `heading_path` |
+| Paragraph | `ParsedBlock(block_type=paragraph)` | Preserve inline text and line span |
+| Ordered/unordered list item | `ParsedBlock(block_type=list_item)` | Preserve nesting depth and source marker |
+| Fenced/indented code | `ParsedBlock(block_type=code_block)` | Preserve code text, fence info/language, and whitespace |
+| Block quote | `ParsedBlock(block_type=quote)` | Preserve quoted text and nesting depth |
+| Table | `ParsedBlock(block_type=table_row)` | Preserve explicit column positions and header/body role |
+| External/internal hyperlink | `LinkRecord` | Reference the containing block; do not fetch the target |
+| Local image reference | `AssetRecord(image)` + `LinkRecord(local_file)` | Preserve alt text and path; resolver/extractor handles the target later |
+| Remote image reference | `AssetRecord(image)` + `LinkRecord(external)` | Preserve occurrence without network access |
+
+Inline formatting such as emphasis or inline code remains within its containing text block unless a later contract explicitly adds inline spans. HTML blocks are preserved as native text; unsupported HTML structure may emit `UNSUPPORTED_MARKDOWN_HTML` without AI interpretation.
+
+Malformed link or image syntax must not be silently repaired. The parser preserves recoverable raw text and emits `MALFORMED_MARKDOWN_LINK` when an intended target cannot be represented reliably.
+
+### Markdown example
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "md_interview_001",
+  "block_id": "md_interview_001_b0042",
+  "source_type": "markdown",
+  "block_index": 42,
+  "source_order": 42,
+  "block_type": "paragraph",
+  "text": "Image là immutable package; container là process đang chạy từ image:",
+  "heading_path": [
+    {
+      "level": 3,
+      "role": "section",
+      "text": "3.6. Docker"
+    }
+  ],
+  "locator": {
+    "type": "markdown",
+    "start_line": 638,
+    "end_line": 638
+  },
+  "metadata": {
+    "parser_name": "TBD",
+    "parser_version": "TBD",
+    "language": "vi"
+  }
+}
+```
+
+Example image/link mapping:
+
+```text
+![architecture](./images/docker.png)
+→ AssetRecord(type=image, status=DETECTED_ONLY, alt_text=architecture)
+→ LinkRecord(type=local_file, source_asset_id=...)
+
+[Docker docs](https://docs.docker.com)
+→ LinkRecord(type=external, source_block_id=...)
+```
+
+The Parser records these references but does not read the image or crawl the website.
+
+## 14. TXT profile — frozen v1
+
+`txt_v1` is conservative and line-driven. Paragraph boundaries may be formed from non-empty line runs separated by blank lines. Structure beyond paragraphs is accepted only when an explicit configured convention supports it; uncertain visual patterns remain paragraphs.
+
+### TXT mapping
+
+| TXT pattern | Common record | Mapping rule |
+|---|---|---|
+| Non-empty line run | `ParsedBlock(block_type=paragraph)` | Baseline representation with inclusive line span |
+| Explicit configured heading convention | `ParsedBlock(block_type=heading)` | Example: a recognized numbered-section grammar; record convention in parser config |
+| Explicit configured list marker | `ParsedBlock(block_type=list_item)` | Preserve marker and nesting only when grammar is deterministic |
+| Explicit delimited table convention | `ParsedBlock(block_type=table_row)` | Preserve columns only when delimiter/schema is unambiguous |
+| Syntactically valid URL occurrence | `LinkRecord(external)` | Attach to containing block without fetching it |
+| Explicit configured local-file reference | `LinkRecord(local_file)` | Do not assume an arbitrary path-like string is an asset |
+
+Underlining, capitalization, repeated spaces, alignment, or a path-like token alone must not create a heading, table, or asset. Heuristic inference is outside `txt_v1`; a future opt-in profile may add it with explicit confidence and issue rules.
+
+### TXT example
+
+```json
+{
+  "schema_version": "1.0",
+  "document_id": "txt_aiops_001",
+  "block_id": "txt_aiops_001_b0088",
+  "source_type": "txt",
+  "block_index": 88,
+  "source_order": 88,
+  "block_type": "table_row",
+  "text": "OpenSearch | Phiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license.",
+  "heading_path": [
+    {
+      "level": 2,
+      "role": "section",
+      "text": "Pipeline Architecture — Data Đi Từ Đâu Đến Đâu"
+    },
+    {
+      "level": 3,
+      "role": "subsection",
+      "text": "Storage — Lưu ở đâu?"
+    }
+  ],
+  "locator": {
+    "type": "txt",
+    "start_line": 238,
+    "end_line": 238
+  },
+  "metadata": {
+    "parser_name": "TBD",
+    "parser_version": "TBD",
+    "language": "vi"
+  }
+}
+```
+
+TXT-specific issues include `INVALID_TEXT_ENCODING`, `AMBIGUOUS_STRUCTURE_PRESERVED_AS_TEXT`, and `INVALID_URL`. Ambiguous structure preserved without content loss uses `impact=NONE`.
+
+## 15. Next decision
+
+The Common Parser subsystem and all five baseline format profiles are frozen. Changes to required fields, status algorithms, record identity scope, artifact integrity rules, cross-record relationships, unified source-order semantics, or format mappings require an explicit contract-version decision.
+
+The next step is implementation planning:
+
+1. Define JSON Schemas for `ParseRequest`, `ParseManifest`, `ParsedBlock`, `AssetRecord`, `LinkRecord`, and `ParseIssue`.
+2. Create parser fixtures and expected ParseBundles for the five corpus formats.
+3. Implement the shared record/locator utilities and one format parser at a time.
+4. Validate output integrity, source order, locators, and issue-to-status propagation before chunking experiments.
