@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://studybot.local/schemas/corpus-manifest.schema.json",
+  "title": "StudyBot corpus manifest entry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_id",
+    "title",
+    "file_type",
+    "languages",
+    "corpus_role",
+    "expected_ingestion",
+    "locator_types"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "document_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "file_type": {
+      "enum": ["pdf", "pptx", "ppt", "docx", "md", "txt"]
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "enum": ["en", "vi"] }
+    },
+    "corpus_role": {
+      "enum": ["GROUND_TRUTH", "COMPATIBILITY_ONLY"]
+    },
+    "expected_ingestion": {
+      "enum": ["SUPPORTED", "UNSUPPORTED_LEGACY_PPT"]
+    },
+    "locator_types": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["page", "slide", "section", "paragraph", "text_span"]
+      }
+    },
+    "evaluation_roles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "factual",
+          "synthesis",
+          "cross_document",
+          "cross_lingual",
+          "citation",
+          "refusal",
+          "parser_compatibility"
+        ]
+      }
+    },
+    "privacy": {
+      "enum": ["PUBLIC_METADATA_ONLY", "PRIVATE_PERSONAL_SOURCE"]
+    },
+    "notes": { "type": "string", "maxLength": 500 }
+  }
+}
+

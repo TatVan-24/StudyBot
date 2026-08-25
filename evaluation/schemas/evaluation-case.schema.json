@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://studybot.local/schemas/evaluation-case.schema.json",
+  "title": "StudyBot evaluation case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "split",
+    "category",
+    "query",
+    "scope",
+    "expected",
+    "evidence",
+    "tags",
+    "review"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "case_id": {
+      "type": "string",
+      "pattern": "^eval_[a-z0-9]+(?:_[a-z0-9]+)*$"
+    },
+    "split": { "enum": ["development", "test"] },
+    "category": {
+      "enum": [
+        "direct_factual",
+        "multi_section_synthesis",
+        "multi_document_synthesis",
+        "lexical_mismatch",
+        "cross_document_confusion",
+        "unanswerable",
+        "cross_lingual",
+        "table_or_visual_limitation"
+      ]
+    },
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "language"],
+      "properties": {
+        "text": { "type": "string", "minLength": 3 },
+        "language": { "enum": ["en", "vi"] }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_ids"],
+      "properties": {
+        "document_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "answerability",
+        "reference_answer",
+        "required_facts",
+        "forbidden_claims"
+      ],
+      "properties": {
+        "answerability": { "enum": ["ANSWERABLE", "UNANSWERABLE"] },
+        "reference_answer": { "type": ["string", "null"] },
+        "required_facts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "forbidden_claims": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9_-]+$" }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reviewer", "reviewed_at"],
+      "properties": {
+        "status": { "enum": ["DRAFT", "HUMAN_REVIEWED"] },
+        "reviewer": { "type": ["string", "null"] },
+        "reviewed_at": {
+          "type": ["string", "null"],
+          "format": "date"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document_id", "locator", "evidence_note"],
+      "properties": {
+        "document_id": { "type": "string" },
+        "locator": { "$ref": "#/$defs/locator" },
+        "evidence_note": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "locator": {
+      "oneOf": [
+        { "$ref": "#/$defs/pageLocator" },
+        { "$ref": "#/$defs/slideLocator" },
+        { "$ref": "#/$defs/sectionLocator" },
+        { "$ref": "#/$defs/paragraphLocator" },
+        { "$ref": "#/$defs/textSpanLocator" }
+      ]
+    },
+    "pageLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "pdf_page"],
+      "properties": {
+        "type": { "const": "page" },
+        "pdf_page": { "type": "integer", "minimum": 1 },
+        "printed_page": { "type": ["integer", "string"] },
+        "section": { "type": "string" }
+      }
+    },
+    "slideLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "slide"],
+      "properties": {
+        "type": { "const": "slide" },
+        "slide": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string" }
+      }
+    },
+    "sectionLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "heading_path"],
+      "properties": {
+        "type": { "const": "section" },
+        "heading_path": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "paragraphLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "paragraph_index"],
+      "properties": {
+        "type": { "const": "paragraph" },
+        "paragraph_index": { "type": "integer", "minimum": 1 },
+        "anchor": { "type": "string", "maxLength": 120 }
+      }
+    },
+    "textSpanLocator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "start_line", "end_line"],
+      "properties": {
+        "type": { "const": "text_span" },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "quote_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}
+
