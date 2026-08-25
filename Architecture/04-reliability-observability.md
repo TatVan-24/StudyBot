@@ -27,7 +27,7 @@ The lease token is a fencing token. A stale worker cannot overwrite a job reclai
 flowchart TD
     E["Job error"] --> C{"Classify"}
     C -->|"Transient"| R["Bounded retry + backoff + jitter"]
-    R --> Q["RETRY_PENDING → QUEUED"]
+    R --> Q["RETRY_PENDING, then QUEUED"]
     C -->|"Permanent"| F["Commit FAILED + acknowledge"]
     R -->|"attempts exhausted"| D["DLQ + FAILED"]
 ```
@@ -82,4 +82,3 @@ An offline worker is expected and does not alert by itself. Alerts focus on acti
 - Lease-extension failures remain elevated.
 
 Thresholds are finalized from measured workload and product SLOs, not hardcoded before testing.
-
