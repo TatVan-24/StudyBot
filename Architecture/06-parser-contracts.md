@@ -78,12 +78,13 @@ parsed/{document_id}/{parse_job_id}/
 
 Downstream ownership is explicit:
 
-```text
-blocks.jsonl   → Chunker
-assets.jsonl   → Multimodal Enricher
-links.jsonl    → Link Resolver
-manifest.json  → Monitoring and reproducibility
-issues.jsonl   → Monitoring and debugging
+```mermaid
+flowchart LR
+    B[blocks.jsonl] --> C[Chunker]
+    A[assets.jsonl] --> E[Multimodal Enricher]
+    L[links.jsonl] --> R[Link Resolver]
+    M[manifest.json] --> MR[Monitoring and reproducibility]
+    I[issues.jsonl] --> MD[Monitoring and debugging]
 ```
 
 Writers must publish a bundle atomically: incomplete temporary artifacts must not be exposed as a completed bundle, and `manifest.json` is finalized only after the artifact counts and checksums are known.
@@ -99,9 +100,10 @@ Writers must publish a bundle atomically: incomplete temporary artifacts must no
   "source_sha256": "sha256:TBD",
   "parser_profile": "pptx_v1",
   "status": "PARTIAL",
+  "created_at": "2026-08-24T14:30:00Z",
   "parser": {
     "name": "python-pptx",
-    "version": "TBD"
+    "build_id": "git:f674ad2"
   },
   "artifacts": {
     "blocks": {
@@ -130,27 +132,30 @@ Writers must publish a bundle atomically: incomplete temporary artifacts must no
 
 Each artifact descriptor is the single source of truth for its path, record count, and checksum. Bundle integrity is valid only when the actual JSONL record count equals `record_count` and the artifact hash equals `sha256`. Top-level duplicate counts are forbidden.
 
+Every published bundle has a fixed shape: all four JSONL artifacts and descriptors are required, including empty files with `record_count = 0`. For a parser-level `FAILED` result, the Parser publishes a full bundle when atomic publication remains possible: blocks, assets, and links are empty, while issues contains at least one `FATAL` record. If infrastructure prevents atomic publication, no ParseBundle is considered published and the Job/observability layer records the operational failure.
+
+`parser.build_id` is the authoritative immutable implementation identity. `created_at` is required in RFC 3339 UTC and records when the finalized Manifest was created; it supports audit and display ordering but does not participate in deterministic record IDs or provide distributed concurrency ordering.
+
 Status semantics are scoped to Parser responsibilities:
 
-```text
-COMPLETED
-→ all content required by parser_profile was detected, extracted, located, and preserved
-
-PARTIAL
-→ usable output exists, but content required by parser_profile was lost or could not be extracted
-
-FAILED
-→ no sufficiently reliable representation was produced
+```mermaid
+flowchart LR
+    C[COMPLETED] --> CD[Required content detected, extracted, located and preserved]
+    P[PARTIAL] --> PD[Usable output exists, but required content was lost]
+    F[FAILED] --> FD[No sufficiently reliable representation was produced]
 ```
 
 An image extracted successfully but not yet interpreted by a Vision model does not make parsing `PARTIAL`. For example, an extracted chart may yield `COMPLETED`; unsupported SmartArt required by the profile yields `PARTIAL + UNSUPPORTED_SMARTART`.
 
 Final status is derived deterministically from `ParseIssue.impact`:
 
-```text
-any FATAL issue        → FAILED
-else any CONTENT_LOSS  → PARTIAL
-else                   → COMPLETED
+```mermaid
+flowchart TD
+    S[Evaluate ParseIssue impacts] --> FQ{Any FATAL?}
+    FQ -->|Yes| F[FAILED]
+    FQ -->|No| CQ{Any CONTENT_LOSS?}
+    CQ -->|Yes| P[PARTIAL]
+    CQ -->|No| C[COMPLETED]
 ```
 
 ## 5. Common ParsedBlock envelope
@@ -168,6 +173,7 @@ else                   → COMPLETED
   "block_type": "paragraph",
   "text": "...",
   "heading_path": [],
+  "related_asset_ids": [],
   "locator": {},
   "metadata": {}
 }
@@ -176,16 +182,22 @@ else                   → COMPLETED
 Common invariants:
 
 - `block_id` is unique within one ParseBundle.
-- Record IDs are deterministic when `source_sha256`, `parser_profile`, parser name/version, and `contract_version` are unchanged. `parse_job_id` does not participate in record-ID generation, so an identical rerun produces identical record IDs.
-- Record IDs are not guaranteed to remain stable when the source, profile, parser version, or contract version changes. This rule also applies to `asset_id`, `link_id`, and `issue_id`.
+- `block_id` is derived from `document_id`, a canonical physical locator, and normalized native content. It must not be derived from `block_index`, `source_order`, `parse_job_id`, or `created_at`.
+- Record IDs are deterministic when `source_sha256`, canonical locator/content normalization, `parser_profile`, parser name/build ID, and `contract_version` are unchanged. `parse_job_id` and `created_at` do not participate in record-ID generation, so an identical rerun produces identical record IDs.
+- Record IDs are not guaranteed to remain stable when the source, profile, parser build, or contract version changes. This rule also applies to `asset_id`, `link_id`, and `issue_id`.
 - All human-facing indices are 1-based.
+- `block_index` is required, unique, and contiguous from `1..N` within `blocks.jsonl`; it counts only `ParsedBlock` records.
 - `source_order` is required on flow-bearing `ParsedBlock` and `AssetRecord` records. It provides one 1-based ordering namespace across the separate `blocks.jsonl` and `assets.jsonl` artifacts.
-- `source_order` is unique among flow-bearing records in one ParseBundle. A link or issue references its source record/locator and does not consume a separate order position.
+- `source_order` is unique and contiguous across all native flow objects recognized by the Parser. A link or issue references its source record/locator and does not consume a separate order position.
+- A detected asset that cannot be extracted must retain its `source_order` through an `AssetRecord` in `DETECTED_ONLY` or `FAILED` state; the Parser must not silently drop the object and renumber later content.
 - Format profiles define how native objects receive `source_order`; downstream code reconstructs source flow by merging blocks and assets on this field.
 - `text` preserves source meaning; normalization may fix whitespace but must not generate new facts.
 - `heading_path` is always present, ordered root-to-leaf, and may be `[]` when no reliable heading exists.
 - Heading levels increase from parent to child. The final item is the nearest reliable heading containing the block.
+- For `block_type=heading`, the final `heading_path` item is the heading block itself. For other block types, it is the nearest containing heading.
 - Document title is stored in the corpus manifest and is not repeated in every `heading_path`.
+- `metadata` follows the conditional schema for the selected `block_type`; it is not an unrestricted extension bag.
+- `related_asset_ids` is required as an array and may be empty. Persisted block-to-asset references must be symmetric with `AssetRecord.native_context.related_block_ids`.
 - A chunk stores `source_block_ids`; locators remain owned by the referenced parsed blocks.
 
 Allowed initial `block_type` values are:
@@ -250,22 +262,22 @@ Initial asset types are `image`, `chart`, `diagram`, `audio`, `video`, `smartart
 
 Conditional requirements:
 
-```text
-EXTRACTED
-→ extraction.storage_uri REQUIRED
-→ extraction.sha256 REQUIRED
-
-DETECTED_ONLY
-→ extraction.storage_uri absent
-→ extraction.sha256 absent
-
-FAILED
-→ extraction.storage_uri absent
-→ extraction.sha256 absent
-→ at least one related ParseIssue REQUIRED
+```mermaid
+flowchart LR
+    S["Asset extraction status"]
+    S -->|EXTRACTED| E["Require storage_uri and sha256"]
+    S -->|DETECTED_ONLY| D["storage_uri and sha256 absent"]
+    S -->|FAILED| F["storage_uri and sha256 absent; require related ParseIssue"]
 ```
 
 An `AssetRecord` in `FAILED` state still preserves its identity and physical locator. These conditions must be encoded with conditional JSON Schema rules when schemas are implemented.
+
+Block–asset cross-reference invariants:
+
+- When `AssetRecord.native_context.related_block_ids` contains a block ID, that `ParsedBlock.related_asset_ids` must contain the asset ID.
+- When `ParsedBlock.related_asset_ids` contains an asset ID, that asset must reference the block in `native_context.related_block_ids`.
+- Both records must exist in the same ParseBundle and share the same `document_id`.
+- Duplicate references and dangling one-sided relationships make the bundle invalid.
 
 ## 7. Common LinkRecord
 
@@ -325,33 +337,44 @@ Cross-record reference invariants:
 
 Severity is `INFO`, `WARNING`, or `ERROR` and controls logging or alerting. Impact is `NONE`, `CONTENT_LOSS`, or `FATAL` and controls ParseManifest status. Severity alone must never determine parse status.
 
-```text
-INFO/WARNING/ERROR + NONE
-→ does not lower status
-
-any severity + CONTENT_LOSS
-→ PARTIAL unless another issue is FATAL
-
-any severity + FATAL
-→ FAILED
+```mermaid
+flowchart LR
+    I[ParseIssue]
+    I -->|impact NONE| N[Do not lower status]
+    I -->|impact CONTENT_LOSS| P[PARTIAL unless another issue is FATAL]
+    I -->|impact FATAL| F[FAILED]
 ```
 
 Issues are centralized here instead of being embedded inconsistently in individual format records. A `FAILED` parse must still publish a failure manifest and at least one `FATAL` issue when artifact publication itself remains possible.
 
 ## 9. PDF book profile — frozen v1
 
-For `pdf_book_v1`, the physical PDF page and printed page are both required. `printed_page` may be an integer or a string such as a Roman-numeral label. Unnumbered front matter does not produce searchable blocks in this profile.
+For `pdf_book_v1`, every published block must identify at least one physical PDF page. A human-facing printed page label is preserved when deterministic evidence exists and is otherwise explicitly `null`; unlabeled pages may still produce searchable blocks because physical provenance remains available through `pdf_page`.
 
 Required locator fields:
 
 ```text
 type = pdf
+locations: array with at least one PageLocation
+
+PageLocation:
 pdf_page: integer >= 1
-printed_page: integer | string
-bounding_box: object | null
+printed_page: string | null
+bounding_boxes: array with zero or more normalized boxes
 ```
 
-If a content page has no resolved printed page, parsing is `PARTIAL` with warning `MISSING_PRINTED_PAGE`; the parser must not silently write `null`.
+`locations` is sorted by strictly increasing `pdf_page`, and one physical page appears at most once per block. `bounding_boxes` preserves reliable native reading order within its page. An empty array means page-level provenance is reliable but precise geometry is unavailable; this does not cause content loss.
+
+`printed_page` evidence is accepted from reliable PDF PageLabels metadata or from a deterministic printed-number rule packaged in the immutable parser build. Offset extrapolation is forbidden unless that offset itself is established by a deterministic versioned rule with explicit evidence. When evidence is insufficient, the required field is `null`; an empty string or invented label is invalid.
+
+Bounding boxes use normalized top-left coordinates:
+
+```text
+0 <= x_min < x_max <= 1
+0 <= y_min < y_max <= 1
+```
+
+Each box represents one contiguous physical region. Exact duplicate boxes, zero-area boxes, and coordinates outside the normalized range are invalid. Small overlaps may remain valid and produce a quality signal; hard rules for large overlaps are deferred until fixtures justify them.
 
 ### PDF example
 
@@ -359,7 +382,7 @@ If a content page has no resolved printed page, parsing is `PARTIAL` with warnin
 {
   "schema_version": "1.0",
   "document_id": "pdf_dmls_001",
-  "block_id": "pdf_dmls_001_b0124",
+  "block_id": "pdf_dmls_001_b_91a7c42f20e63b18d9214a7c4129e845",
   "source_type": "pdf",
   "block_index": 124,
   "source_order": 124,
@@ -377,17 +400,25 @@ If a content page has no resolved printed page, parsing is `PARTIAL` with warnin
       "text": "Data Sources"
     }
   ],
+  "related_asset_ids": [],
   "locator": {
     "type": "pdf",
-    "pdf_page": 70,
-    "printed_page": 50,
-    "bounding_box": null
+    "locations": [
+      {
+        "pdf_page": 70,
+        "printed_page": "50",
+        "bounding_boxes": [
+          {
+            "x_min": 0.12,
+            "y_min": 0.34,
+            "x_max": 0.87,
+            "y_max": 0.51
+          }
+        ]
+      }
+    ]
   },
-  "metadata": {
-    "parser_name": "pymupdf",
-    "parser_version": "TBD",
-    "language": "en"
-  }
+  "metadata": {}
 }
 ```
 
@@ -410,16 +441,17 @@ PDF-specific invariants:
 - A raster image that visually contains a chart remains `asset_type=image`. Semantic reclassification belongs to Multimodal Enrichment.
 - A vector figure successfully rendered to an asset is `EXTRACTED`; a detected figure that cannot be rendered or grouped is `DETECTED_ONLY` with a related issue.
 - Required figure content that cannot be preserved produces `impact=CONTENT_LOSS` and therefore a `PARTIAL` parse.
-- `bounding_box` is required for a cropped or detected figure region and may remain `null` only when the asset applies to the full physical page.
-- PDF URLs, embedded media, and attachments use the same `pdf_page`, `printed_page`, and bounding-box provenance model as text and figures.
+- Assets and links reuse the same page-grouped provenance principle where applicable: one page location with zero or more physical regions, rather than duplicate page entries.
+- Missing required `pdf_page` provenance prevents publication of the affected record and produces `ParseIssue(impact=CONTENT_LOSS)`; `printed_page = null` and `bounding_boxes = []` remain valid.
 
 Example source mapping:
 
-```text
-paragraph before Figure 3-7 → ParsedBlock
-Figure 3-7 caption          → ParsedBlock(type=caption)
-Figure 3-7 diagram          → AssetRecord(type=diagram)
-hyperlink in caption        → LinkRecord(source_block_id=caption block)
+```mermaid
+flowchart LR
+    P[Paragraph before Figure 3-7] --> PB[ParsedBlock]
+    C[Figure 3-7 caption] --> CB[ParsedBlock: caption]
+    F[Figure 3-7 diagram] --> AR[AssetRecord: diagram]
+    H[Hyperlink in caption] --> LR[LinkRecord referencing caption block]
 ```
 
 ## 10. PPTX profile — frozen v1
@@ -459,6 +491,7 @@ Required behavior:
       "text": "Artificial Languages"
     }
   ],
+  "related_asset_ids": [],
   "locator": {
     "type": "pptx",
     "slide": 4,
@@ -467,8 +500,6 @@ Required behavior:
     "bounding_box": null
   },
   "metadata": {
-    "parser_name": "python-pptx",
-    "parser_version": "TBD",
     "language": "en",
     "bullet_level": 0
   }
@@ -513,33 +544,34 @@ PPTX-specific invariants:
 
 Example source mapping:
 
-```text
-slide title                 → ParsedBlock(type=title)
-native bullets              → ParsedBlock(type=list_item)
-embedded PNG graph          → AssetRecord(type=image)
-native PowerPoint chart     → AssetRecord(type=chart)
-grouped shapes/connectors   → AssetRecord(type=diagram)
-caption below an image      → ParsedBlock(type=caption)
-clickable image URL         → LinkRecord(source_asset_id=...)
+```mermaid
+flowchart LR
+    T[Slide title] --> TB[ParsedBlock: title]
+    B[Native bullets] --> BB[ParsedBlock: list_item]
+    PNG[Embedded PNG graph] --> IA[AssetRecord: image]
+    C[Native PowerPoint chart] --> CA[AssetRecord: chart]
+    G[Grouped shapes and connectors] --> DA[AssetRecord: diagram]
+    CP[Caption below image] --> CB[ParsedBlock: caption]
+    U[Clickable image URL] --> LR[LinkRecord referencing asset]
 ```
 
 ### Legacy PowerPoint boundary
 
 Binary `.ppt` is not supported by `pptx_v1`:
 
-```text
-.ppt without an approved converter
-→ FAILED
-→ ParseIssue(code=UNSUPPORTED_LEGACY_PPT, impact=FATAL)
+```mermaid
+flowchart LR
+    P[Legacy .ppt without approved converter] --> F[FAILED]
+    F --> I[ParseIssue: UNSUPPORTED_LEGACY_PPT, FATAL]
 ```
 
 A future conversion workflow is a separate ingestion step:
 
-```text
-source .ppt
-→ convert to immutable .pptx snapshot
-→ retain source SHA-256 and converted-artifact SHA-256
-→ submit a new ParseRequest using pptx_v1
+```mermaid
+flowchart LR
+    P[Source .ppt] --> C[Convert to immutable .pptx snapshot]
+    C --> H[Retain source and converted SHA-256]
+    H --> R[Submit ParseRequest using pptx_v1]
 ```
 
 ## 11. DOCX profile — frozen v1
@@ -550,12 +582,17 @@ source .ppt
 
 The parser assigns one monotonically increasing `source_order` across flow-bearing blocks and assets:
 
-```text
-w:p paragraph        → ParsedBlock source_order=1
-w:tbl row 1          → ParsedBlock source_order=2
-w:tbl row 2          → ParsedBlock source_order=3
-w:p containing image → AssetRecord source_order=4
-next w:p paragraph   → ParsedBlock source_order=5
+```mermaid
+flowchart TD
+    P1["w:p paragraph"] --> B1["ParsedBlock: source_order 1"]
+    B1 --> R1["w:tbl row 1"]
+    R1 --> B2["ParsedBlock: source_order 2"]
+    B2 --> R2["w:tbl row 2"]
+    R2 --> B3["ParsedBlock: source_order 3"]
+    B3 --> IMG["w:p containing image"]
+    IMG --> A4["AssetRecord: source_order 4"]
+    A4 --> P5["Next w:p paragraph"]
+    P5 --> B5["ParsedBlock: source_order 5"]
 ```
 
 An otherwise empty paragraph containing an image does not create an empty block. A paragraph containing both native text and an image creates both records in run order. `paragraph_index`, `run_index`, `table_index`, `row_index`, and `column_index` are physical 1-based locators; they are not substitutes for `source_order`.
@@ -634,6 +671,7 @@ External references remain native paragraph/list-item blocks plus one `LinkRecor
   "block_type": "table_row",
   "text": "Q5 ___ are general computers that can learn algorithms to map input sequences to output sequences? A. CNN B. LSTM C. RNN D. None of these",
   "heading_path": [],
+  "related_asset_ids": [],
   "locator": {
     "type": "docx",
     "body_child_index": 1,
@@ -641,8 +679,6 @@ External references remain native paragraph/list-item blocks plus one `LinkRecor
     "row_index": 5
   },
   "metadata": {
-    "parser_name": "python-docx",
-    "parser_version": "TBD",
     "language": "en",
     "cells": [
       {
@@ -716,14 +752,13 @@ Malformed link or image syntax must not be silently repaired. The parser preserv
       "text": "3.6. Docker"
     }
   ],
+  "related_asset_ids": [],
   "locator": {
     "type": "markdown",
     "start_line": 638,
     "end_line": 638
   },
   "metadata": {
-    "parser_name": "TBD",
-    "parser_version": "TBD",
     "language": "vi"
   }
 }
@@ -731,13 +766,11 @@ Malformed link or image syntax must not be silently repaired. The parser preserv
 
 Example image/link mapping:
 
-```text
-![architecture](./images/docker.png)
-→ AssetRecord(type=image, status=DETECTED_ONLY, alt_text=architecture)
-→ LinkRecord(type=local_file, source_asset_id=...)
-
-[Docker docs](https://docs.docker.com)
-→ LinkRecord(type=external, source_block_id=...)
+```mermaid
+flowchart LR
+    MI[Markdown local image reference] --> AR[AssetRecord: image, DETECTED_ONLY]
+    AR --> LF[LinkRecord: local_file, references asset]
+    MU[Markdown Docker docs link] --> EX[LinkRecord: external, references block]
 ```
 
 The Parser records these references but does not read the image or crawl the website.
@@ -783,14 +816,13 @@ Underlining, capitalization, repeated spaces, alignment, or a path-like token al
       "text": "Storage — Lưu ở đâu?"
     }
   ],
+  "related_asset_ids": [],
   "locator": {
     "type": "txt",
     "start_line": 238,
     "end_line": 238
   },
   "metadata": {
-    "parser_name": "TBD",
-    "parser_version": "TBD",
     "language": "vi"
   }
 }
