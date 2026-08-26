@@ -696,7 +696,7 @@ All human-facing and contract-level positional indexes are one-based. Native tec
 
 | Category | Examples | Rule |
 | --- | --- | --- |
-| Contract-level index | `pdf_page`, `slide`, `shape_index`, `paragraph_index`, `table_index`, `row_index`, `start_line`, `end_line` | Integer `>= 1`; one-based |
+| Contract-level index | `pdf_page`, `slide`, each `shape_path` element, `body_child_index`, `physical_paragraph_index`, `physical_row_index`, logical `row_index`, `start_line`, `end_line` | Integer `>= 1`; one-based |
 | Native technical identifier | `shape_id`, `relationship_id`, `paragraph_id`, XML IDs | Preserve the native string/integer representation when required; do not increment or normalize as an index |
 | Human-facing page label | `printed_page` | Preserve reliable source labels as strings; use `null` when unavailable; it is not an array index |
 
@@ -706,12 +706,13 @@ Example:
 {
   "type": "pptx",
   "slide": 5,
-  "shape_index": 2,
-  "shape_id": 102
+  "shape_path": [2],
+  "shape_id": 102,
+  "physical_paragraph_index": 1
 }
 ```
 
-`slide` and `shape_index` are StudyBot one-based positions. `shape_id` is the native PowerPoint/XML identifier.
+`slide`, each `shape_path` element, and `physical_paragraph_index` are StudyBot one-based positions. `shape_id` is the normalized numeric value of the native PowerPoint/XML identifier.
 
 For PDF:
 
@@ -875,6 +876,388 @@ Invalid geometry:
 
 The PDF locator is frozen v1. Changes to page grouping, printed-page evidence, coordinate normalization, or required publication provenance require an explicit contract-version decision.
 
-## 10. Next ParsedBlock work
+## 10. PPTX locator field rules — frozen v1
 
-Design and freeze the remaining source-specific locators in this order: PPTX variants, DOCX variants, Markdown line range, and TXT line range. Then run the final ParsedBlock consistency review before encoding `parsed-block.schema.json`.
+### 10.1 Native addressing and shape path
+
+`shape_path` addresses the final shape through the native OOXML shape tree. Every path element is one-based and counts every native child in XML shape-tree order, including images, empty shapes, groups, and unsupported objects that produce no ParsedBlock. Parser filtering never renumbers the path.
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `shape_path` | Yes | array of integers | Non-empty; each item `>= 1`; traverses from slide root through nested groups to the final shape |
+| `shape_id` | Yes | integer | `>= 1`; normalized numeric value of the final shape's OOXML `<p:cNvPr id>` |
+
+`shape_path[0]` already identifies the top-level shape position, so a separate `shape_index` is forbidden. `shape_path` is physical addressing, not reading order; `source_order` remains authoritative for reconstructed reading flow.
+
+### 10.2 `text_paragraph` variant
+
+Used for native title, heading, paragraph, list-item, caption, quote, or code text contained in a PPTX text frame.
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `pptx` |
+| `element_type` | Yes | string const | Exactly `text_paragraph` |
+| `slide` | Yes | integer | `>= 1`; one-based physical slide |
+| `shape_path` | Yes | array of integers | Valid native path defined in Section 10.1 |
+| `shape_id` | Yes | integer | Valid native final-shape ID defined in Section 10.1 |
+| `physical_paragraph_index` | Yes | integer | `>= 1`; one-based native paragraph position in the final text frame; never renumbered |
+| `shape_bounding_box` | Yes | object or null | Absolute normalized geometry of the containing final shape; Section 10.4 |
+
+Empty native paragraphs still consume `physical_paragraph_index` but produce no ParsedBlock. Therefore published paragraph indices may contain gaps.
+
+### 10.3 `table_row` variant
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `pptx` |
+| `element_type` | Yes | string const | Exactly `table_row` |
+| `slide` | Yes | integer | `>= 1`; one-based physical slide |
+| `shape_path` | Yes | array of integers | Must resolve to a native table shape |
+| `shape_id` | Yes | integer | Must match that native table shape |
+| `physical_row_index` | Yes | integer | `>= 1`; one-based native table row; never renumbered |
+| `shape_bounding_box` | Yes | object or null | Geometry of the complete containing table shape, not the individual row |
+
+PPTX table granularity is intentionally fixed:
+
+```mermaid
+flowchart LR
+    T["Native PPTX table"] --> R["One physical row"]
+    R --> B["At most one ParsedBlock: table_row"]
+    R --> C["Cell and paragraph content"]
+    C --> M["metadata.cells"]
+```
+
+Cell paragraphs do not create separate `text_paragraph` blocks, so their absence is not content loss. `physical_row_index` records source provenance and may have gaps. `metadata.row_index` records reconstructed logical order and is unique and contiguous `1..N` within `table_id`; the two values need not be equal. A skipped physical row requires a ParseIssue, using `CONTENT_LOSS` when native content could not be represented.
+
+### 10.4 Shape geometry
+
+`shape_bounding_box` contains the axis-aligned box enclosing the final shape after applying rotation, flip, and every nested group transform. Coordinates are absolute on the slide, normalized to `0..1`, with top-left origin.
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `x_min` | Yes | number | `0 <= x_min < x_max <= 1` |
+| `y_min` | Yes | number | `0 <= y_min < y_max <= 1` |
+| `x_max` | Yes | number | `0 <= x_min < x_max <= 1` |
+| `y_max` | Yes | number | `0 <= y_min < y_max <= 1` |
+
+When the absolute transform cannot be computed reliably, the required field is `null`. This remains a valid locator and does not produce `CONTENT_LOSS`; UI falls back to slide/object addressing. Exact paragraph and row geometry is deferred to v2 or a rendering/enrichment stage.
+
+### 10.5 Source and consistency invariants
+
+- `slide` must exist in the immutable PPTX snapshot.
+- `shape_path` must traverse successfully, and the final object must have the declared integer `shape_id`.
+- A `text_paragraph` final shape must expose a native text frame containing `physical_paragraph_index`.
+- A `table_row` final shape must be a native table containing `physical_row_index`.
+- `element_type = table_row` requires `block_type = table_row`; other PPTX textual block types use `text_paragraph`.
+- Notes, masters, layout-only text, and speaker notes are outside `pptx_v1` and do not produce locator failures.
+- Paragraphs inside table cells belong only to `metadata.cells`; duplicate ParsedBlocks for the same cell text are invalid.
+- Failure to resolve required slide/path/ID/physical index prevents publication of the affected block and produces `ParseIssue(impact=CONTENT_LOSS)`.
+
+### 10.6 Valid examples
+
+1. Normal textbox paragraph:
+
+```json
+{"type":"pptx","element_type":"text_paragraph","slide":5,"shape_path":[2],"shape_id":102,"physical_paragraph_index":1,"shape_bounding_box":{"x_min":0.10,"y_min":0.08,"x_max":0.90,"y_max":0.22}}
+```
+
+2. Empty native paragraph preserves a physical-index gap:
+
+```json
+{"type":"pptx","element_type":"text_paragraph","slide":5,"shape_path":[2],"shape_id":102,"physical_paragraph_index":3,"shape_bounding_box":null}
+```
+
+3. Textbox inside nested groups:
+
+```json
+{"type":"pptx","element_type":"text_paragraph","slide":6,"shape_path":[3,2,1],"shape_id":207,"physical_paragraph_index":1,"shape_bounding_box":{"x_min":0.20,"y_min":0.20,"x_max":0.55,"y_max":0.40}}
+```
+
+4. Physical and logical table row positions differ:
+
+```json
+{
+  "locator": {"type":"pptx","element_type":"table_row","slide":5,"shape_path":[4],"shape_id":108,"physical_row_index":4,"shape_bounding_box":null},
+  "metadata": {"table_id":"table_002","row_index":3,"cells":[{"column_start":1,"column_span":1,"row_span":1,"text":"S3"}]}
+}
+```
+
+5. Geometry unavailable but provenance complete:
+
+```json
+{"type":"pptx","element_type":"text_paragraph","slide":7,"shape_path":[1],"shape_id":301,"physical_paragraph_index":1,"shape_bounding_box":null}
+```
+
+6. Rotated shape represented by its absolute axis-aligned bounding box:
+
+```json
+{"type":"pptx","element_type":"text_paragraph","slide":8,"shape_path":[2],"shape_id":402,"physical_paragraph_index":1,"shape_bounding_box":{"x_min":0.15,"y_min":0.10,"x_max":0.62,"y_max":0.58}}
+```
+
+### 10.7 Invalid examples
+
+| Case | Invalid sample | Reason |
+| --- | --- | --- |
+| Invalid slide | `"slide": 0` | Contract positions are one-based |
+| Empty path | `"shape_path": []` | Cannot address a final native shape |
+| Unresolvable path | `"shape_path": [99]` | Referenced native child does not exist |
+| ID mismatch | `"shape_path": [2], "shape_id": 999` | Final native shape has a different ID |
+| Missing paragraph | `"physical_paragraph_index": 20` | Final text frame contains fewer native paragraphs |
+| Missing row | `"physical_row_index": 20` | Final table contains fewer native rows |
+| Invalid geometry | `{"x_min":0.8,"y_min":0.2,"x_max":0.2,"y_max":0.4}` | Minimum/maximum ordering is invalid |
+
+A `table_row` block using the `text_paragraph` variant, or a non-table block using the `table_row` variant, is also invalid even when every individual field has a valid primitive value.
+
+The PPTX locator is frozen v1. Changes to shape-tree addressing, physical index semantics, table granularity, shape-ID type, or geometry scope require an explicit contract-version decision.
+
+## 11. DOCX locator field rules — frozen v1
+
+### 11.1 Physical scope and body anchor
+
+`docx_v1` addresses native content in the main document body. `body_child_index` is the physical anchor for top-level paragraphs and tables and counts every direct `<w:body>` child in native XML order, including empty, unsupported, or non-content children that produce no ParsedBlock. Filtering never renumbers this index.
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `body_child_index` | Yes | integer | `>= 1`; one-based native position among all direct body children |
+
+`body_child_index` preserves paragraph/table interleaving. Separate `physical_paragraph_index` and `physical_table_index` fields are forbidden because they add no provenance that cannot be derived by scanning the body and do not preserve the unified physical sequence.
+
+### 11.2 `paragraph` variant
+
+The physical paragraph variant covers every supported semantic block whose native source is one top-level `<w:p>`.
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `docx` |
+| `element_type` | Yes | string const | Exactly `paragraph` |
+| `body_child_index` | Yes | integer | Must resolve to a direct native `<w:p>` |
+| `paragraph_id` | No | string | Native `w14:paraId`; exactly eight hexadecimal characters; preserve native case; never generate |
+
+| `block_type` | DOCX physical representation |
+| --- | --- |
+| `title`, `heading`, `paragraph`, `list_item`, `caption`, `quote` | `paragraph` when backed by one native `<w:p>` |
+| `code_block` | `paragraph` only when a deterministic native paragraph rule recognizes it |
+| `table_row` | Never; uses the table-row variant |
+
+When `paragraph_id` is present, it must equal the native ID on the resolved paragraph. Its absence is valid and produces no issue. It is supplementary cross-check evidence, not the physical anchor, and is excluded from canonical `block_id` identity so Word regenerating an optional paragraph ID does not change an otherwise identical block identity.
+
+### 11.3 `table_row` variant
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `docx` |
+| `element_type` | Yes | string const | Exactly `table_row` |
+| `body_child_index` | Yes | integer | Must resolve to a direct native `<w:tbl>` |
+| `physical_row_index` | Yes | integer | `>= 1`; one-based native row position; never renumbered |
+
+DOCX table granularity is intentional:
+
+```mermaid
+flowchart LR
+    T["Top-level DOCX table"] --> R["One physical row"]
+    R --> B["At most one ParsedBlock: table_row"]
+    R --> C["Cells and cell paragraphs"]
+    C --> M["metadata.cells"]
+```
+
+Cell paragraphs do not create separate blocks. Empty or unsupported physical rows still consume native positions, so published `physical_row_index` values may contain gaps. `metadata.row_index` remains the separately reconstructed logical row order, unique and contiguous `1..N` within `table_id`; it need not equal `physical_row_index`.
+
+### 11.4 Supported and deferred content
+
+| Source content | v1 behavior | Issue/status behavior |
+| --- | --- | --- |
+| Top-level body paragraph | Paragraph variant | Normal publication when locator resolves |
+| Top-level table row | Table-row variant | Cell content stays in `metadata.cells` |
+| Paragraph inside table cell | No separate ParsedBlock | Intentional granularity; not content loss |
+| Nested table in a cell | Preserve recoverable text in the outer cell; do not publish a nested-table block | Emit issue; use `CONTENT_LOSS` when nested structure/content cannot be represented fully |
+| Textbox/drawing text in main body | Do not publish text without a locator supported by this profile; preserve related asset when possible | Emit issue; use `CONTENT_LOSS` for unrepresented native text |
+| Body content control `<w:sdt>` | Deferred; do not unwrap into a false top-level locator | Emit issue according to recoverability |
+| Header/footer, footnote/endnote, comment | Outside `docx_v1` | No ParsedBlock; optional observability issue with `impact=NONE` |
+
+### 11.5 No native geometry or page number
+
+DOCX is reflowable: page breaks and geometry can change with fonts, margins, printer settings, rendering engine, or Word version. Native `docx_v1` therefore forbids `page_number`, bounding-box, and X/Y coordinate fields.
+
+```mermaid
+flowchart LR
+    D["Native DOCX"] --> N["body_child_index and native row/paragraph evidence"]
+    D --> R["Future immutable rendered snapshot"]
+    R --> G["Rendered page and geometry locator"]
+```
+
+A future rendered-document profile must identify and hash its rendered artifact; rendered geometry must never be presented as native DOCX provenance.
+
+### 11.6 Source and consistency invariants
+
+- `body_child_index` must exist in the immutable DOCX source snapshot and must resolve to the native type required by `element_type`.
+- Every direct body child consumes its physical index, even when it is empty, unsupported, or excluded.
+- A present `paragraph_id` must match the resolved `<w:p>`; absence is valid.
+- `physical_row_index` must resolve to a native row in the top-level table and may contain gaps among published blocks.
+- `element_type = table_row` requires `block_type = table_row`; supported non-table block types use `paragraph`.
+- Duplicate ParsedBlocks for cell paragraphs already represented by a table-row block are invalid.
+- Failure to resolve a required body anchor, native type, or physical row prevents publication of the affected block and produces `ParseIssue(impact=CONTENT_LOSS)`.
+
+### 11.7 Valid examples
+
+Paragraph with native ID:
+
+```json
+{"type":"docx","element_type":"paragraph","body_child_index":4,"paragraph_id":"5E2A81B3"}
+```
+
+Paragraph without native ID:
+
+```json
+{"type":"docx","element_type":"paragraph","body_child_index":4}
+```
+
+Physical body gap caused by an unsupported child:
+
+```json
+{"type":"docx","element_type":"paragraph","body_child_index":7}
+```
+
+Physical and logical table row positions differ:
+
+```json
+{
+  "locator": {"type":"docx","element_type":"table_row","body_child_index":5,"physical_row_index":4},
+  "metadata": {"table_id":"table_002","row_index":3,"cells":[{"column_start":1,"column_span":1,"row_span":1,"text":"S3"}]}
+}
+```
+
+### 11.8 Invalid examples
+
+| Case | Invalid sample | Reason |
+| --- | --- | --- |
+| Zero body index | `"body_child_index": 0` | Contract positions are one-based |
+| Wrong native type | Paragraph variant points to `<w:tbl>` | `element_type` and physical object disagree |
+| Invalid paragraph ID | `"paragraph_id": "xyz"` | Not eight hexadecimal characters |
+| Mismatched paragraph ID | Declared ID differs from resolved `<w:p>` | Supplementary native evidence is false |
+| Missing physical row | `"physical_row_index": 20` | Resolved table contains fewer rows |
+| Wrong block/variant | `block_type=table_row` with `element_type=paragraph` | Semantic and physical variants disagree |
+| Native page geometry | `"page_number": 5` or `"bounding_box": {...}` | Geometry/page fields are forbidden in native `docx_v1` |
+
+The DOCX locator is frozen v1. Changes to body anchoring, optional paragraph-ID semantics, table granularity, supported document parts, or native geometry policy require an explicit contract-version decision.
+
+## 12. Markdown and TXT locator field rules — frozen v1
+
+### 12.1 Shared line-span philosophy
+
+Markdown and TXT retain separate discriminator values and parser profiles but share one physical convention: every ParsedBlock maps to exactly one contiguous, inclusive line span in the decoded source snapshot identified by `source.sha256`.
+
+| Decision | Frozen v1 rule |
+| --- | --- |
+| Index base | One-based |
+| End boundary | Inclusive |
+| Single-line block | `start_line == end_line` |
+| Blank lines | Always count in physical numbering; separators may remain outside the block span |
+| Locator source | Original decoded source snapshot before block-text normalization |
+| Disjoint regions | Never merged into one block; `line_ranges[]` is not supported |
+| Missing reliable span | Do not publish the block; emit `ParseIssue(impact=CONTENT_LOSS)` |
+
+Line counting is deterministic:
+
+- A UTF BOM does not create a separate line.
+- CRLF and LF are treated as line boundaries.
+- A final line without a trailing newline still counts.
+- Cleaning, comment removal, whitespace normalization, and ParsedBlock canonicalization never change line indexes.
+
+### 12.2 Markdown locator
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `markdown` |
+| `start_line` | Yes | integer | `>= 1`; first physical line of the native Markdown construct |
+| `end_line` | Yes | integer | `>= start_line`; final physical line of the same construct |
+
+The locator covers native structural syntax while `ParsedBlock.text` remains searchable content:
+
+| Markdown construct | Locator span |
+| --- | --- |
+| ATX/Setext heading | All source lines belonging to the heading syntax |
+| Paragraph | Every contiguous physical line of the paragraph |
+| List item | Marker line plus all continuation lines belonging to the item |
+| Fenced code | Opening fence, code lines, and closing fence |
+| Indented code | All contiguous indented code lines |
+| Block quote | All physical lines carrying the quote construct |
+| Table row | Physical source line representing that row |
+
+For fenced code, fences may be absent from `ParsedBlock.text`; an explicitly declared language belongs in code-block metadata. For a quote, structural `>` markers may be absent from extracted text. In both cases the locator remains the complete native construct span.
+
+Markdown comments, HTML blocks, or unsupported syntax separating two text regions prevent merging. Each supported AST node produces its own block or issue according to the profile.
+
+### 12.3 TXT locator
+
+| Field | Required | Type | Rule |
+| --- | ---: | --- | --- |
+| `type` | Yes | string const | Exactly `txt` |
+| `start_line` | Yes | integer | `>= 1`; first physical source line of the block |
+| `end_line` | Yes | integer | `>= start_line`; final physical source line of the block |
+
+A baseline TXT paragraph spans from its first non-empty source line through its final contiguous non-empty source line. Blank separator lines are not included in that block span but remain counted when later line numbers are assigned. Structured TXT blocks recognized by deterministic grammar use the full contiguous source lines consumed by that grammar.
+
+### 12.4 Source and consistency invariants
+
+- `locator.type` must equal `ParsedBlock.source_type`; Markdown and TXT locators cannot substitute for one another.
+- Both line indexes must resolve within the decoded immutable source snapshot.
+- Every physical line remains part of numbering even when no block uses it.
+- One block cannot cross a comment, unsupported node, or separator that divides it into disjoint native regions.
+- A locator does not shrink merely because normalization removes structural markers or joins logical text.
+- Failure to resolve either boundary prevents publication of the affected block and produces `CONTENT_LOSS`.
+
+### 12.5 Valid examples
+
+One-line Markdown heading:
+
+```json
+{"type":"markdown","start_line":1,"end_line":1}
+```
+
+Fenced Markdown code including both fences:
+
+```json
+{"type":"markdown","start_line":10,"end_line":12}
+```
+
+Two-line Markdown quote whose extracted text may be one logical string:
+
+```json
+{"type":"markdown","start_line":20,"end_line":21}
+```
+
+One-line TXT block after preceding blank lines:
+
+```json
+{"type":"txt","start_line":7,"end_line":7}
+```
+
+Multi-line TXT paragraph:
+
+```json
+{"type":"txt","start_line":30,"end_line":34}
+```
+
+Final TXT line without a trailing newline:
+
+```json
+{"type":"txt","start_line":50,"end_line":50}
+```
+
+### 12.6 Invalid examples
+
+| Case | Invalid sample | Reason |
+| --- | --- | --- |
+| Zero start | `{"type":"markdown","start_line":0,"end_line":1}` | Line indexes are one-based |
+| Reversed range | `{"type":"txt","start_line":8,"end_line":7}` | End must be greater than or equal to start |
+| Wrong discriminator | Markdown block with `"type":"txt"` | Locator type must match `source_type` |
+| Boundary past EOF | `"end_line":999` for a 50-line source | Boundary does not resolve in source snapshot |
+| Renumbered after cleaning | Original line 3 emitted as line 2 | Locator must use original decoded source numbering |
+| Disjoint merge | One block joins lines `1..2` and `5..6` | V1 supports one contiguous span only |
+| Missing boundary | `{"type":"markdown","start_line":10}` | Both fixed-shape fields are required |
+
+The Markdown and TXT locators are frozen v1. Changes to line representation, inclusivity, contiguous-span policy, or discriminator separation require an explicit contract-version decision.
+
+## 13. Next ParsedBlock work
+
+Run the final consistency review across common fields, metadata, heading paths, and all five locator profiles. Only after that review passes should `parsed-block.schema.json` be encoded.
