@@ -223,7 +223,7 @@ Normalized heading form:
 }
 ```
 
-Initial heading roles are `chapter`, `section`, `subsection`, and `slide`. A parser must not promote ordinary text to a heading when the source structure is uncertain.
+Heading roles in v1 are `chapter`, `section`, `subsection`, `slide`, and `generic`. `generic` means structural evidence proves that a node is a heading but deterministic evidence does not support a more specific semantic role. When structural heading evidence itself is uncertain, the parser keeps the text as a paragraph instead of assigning `generic`.
 
 ## 6. Common AssetRecord
 
@@ -240,8 +240,9 @@ Initial heading roles are `chapter`, `section`, `subsection`, and `slide`. A par
   "locator": {
     "type": "pptx",
     "slide": 4,
-    "shape_index": 5,
-    "bounding_box": null
+    "shape_path": [5],
+    "shape_id": 205,
+    "shape_bounding_box": null
   },
   "native_context": {
     "alt_text": null,
@@ -328,7 +329,8 @@ Cross-record reference invariants:
   "locator": {
     "type": "pptx",
     "slide": 18,
-    "shape_index": 4
+    "shape_path": [4],
+    "shape_id": 804
   },
   "related_record_id": "pptx_nlp_001_a0007",
   "recoverable": true
@@ -460,11 +462,13 @@ A slide is a container and source location. A logical title, paragraph, list ite
 
 Required behavior:
 
-- `slide`, `shape_index`, `paragraph_index`, `source_order`, `table_row`, and `column` are 1-based where applicable.
+- `slide`, every `shape_path` element, `physical_paragraph_index`, `physical_row_index`, `source_order`, logical table row, and logical column positions are 1-based where applicable.
+- `shape_path` follows native OOXML shape-tree order without filtering or renumbering objects that do not produce ParsedBlocks.
+- `shape_id` is normalized from `<p:cNvPr id>` to an integer `>= 1` and must identify the final shape addressed by `shape_path`.
 - Slide title is represented with heading role `slide`.
-- A reliable intra-slide heading may extend `heading_path` with role `section`; uncertain textbox text remains a paragraph.
-- `bullet_level` is required for `list_item`; its outermost value is `0` because it represents nesting depth rather than a human-facing index.
+- A reliable intra-slide heading extends `heading_path` with role `generic` unless a deterministic template-specific rule packaged in the parser build proves a specific role; uncertain textbox text remains a paragraph.
 - A table row retains explicit column positions.
+- PPTX table granularity is intentional: one physical table row produces at most one `ParsedBlock(table_row)`; cell paragraphs do not create separate ParsedBlocks and remain represented in `metadata.cells`.
 - Speaker notes, image OCR, SmartArt semantics, and chart interpretation are deferred.
 
 ### PPTX example
@@ -473,7 +477,7 @@ Required behavior:
 {
   "schema_version": "1.0",
   "document_id": "pptx_nlp_001",
-  "block_id": "pptx_nlp_001_b0043",
+  "block_id": "pptx_nlp_001_b_42ae107b17473e92d1ea0bb89a41d198",
   "source_type": "pptx",
   "block_index": 43,
   "source_order": 43,
@@ -487,21 +491,26 @@ Required behavior:
     },
     {
       "level": 3,
-      "role": "section",
+      "role": "generic",
       "text": "Artificial Languages"
     }
   ],
   "related_asset_ids": [],
   "locator": {
     "type": "pptx",
+    "element_type": "text_paragraph",
     "slide": 4,
-    "shape_index": 3,
-    "paragraph_index": 1,
-    "bounding_box": null
+    "shape_path": [3],
+    "shape_id": 102,
+    "physical_paragraph_index": 1,
+    "shape_bounding_box": null
   },
   "metadata": {
-    "language": "en",
-    "bullet_level": 0
+    "list_id": "pptx_nlp_001_list_01",
+    "item_index": 1,
+    "list_type": "unordered",
+    "list_level": 0,
+    "marker": "•"
   }
 }
 ```
@@ -510,9 +519,9 @@ Table cells use explicit column positions:
 
 ```json
 "cells": [
-  {"column": 1, "text": "S3 Glacier"},
-  {"column": 2, "text": "Retrieve takes hours"},
-  {"column": 3, "text": "Compliance archive"}
+  {"column_start": 1, "column_span": 1, "row_span": 1, "text": "S3 Glacier"},
+  {"column_start": 2, "column_span": 1, "row_span": 1, "text": "Retrieve takes hours"},
+  {"column_start": 3, "column_span": 1, "row_span": 1, "text": "Compliance archive"}
 ]
 ```
 
@@ -535,6 +544,8 @@ PPTX-specific invariants:
 
 - Slide is a provenance container; logical title, paragraph, bullet, table row, and caption are separate blocks.
 - `asset_type` is based on the native PPTX object, not visual meaning inferred from pixels.
+- `physical_paragraph_index` and `physical_row_index` preserve native positions and may contain gaps; `metadata.row_index` is the separately reconstructed logical table order.
+- `shape_bounding_box` describes the final containing shape, not an exact paragraph or row region. It is absolute on the slide, normalized to `0..1`, and may be `null` without content loss.
 - Native text labels within a diagram may remain `ParsedBlock` records while the complete spatial diagram is also preserved as one `AssetRecord`.
 - A hyperlink in text references `source_block_id`; a hyperlink attached to an image or shape references `source_asset_id`. Both may be present when appropriate.
 - `related_block_ids` connect an asset to its native caption, title, bullets, or other surrounding text on the same slide.
@@ -546,7 +557,7 @@ Example source mapping:
 
 ```mermaid
 flowchart LR
-    T[Slide title] --> TB[ParsedBlock: title]
+    T[Slide title] --> TB[ParsedBlock: heading, role slide]
     B[Native bullets] --> BB[ParsedBlock: list_item]
     PNG[Embedded PNG graph] --> IA[AssetRecord: image]
     C[Native PowerPoint chart] --> CA[AssetRecord: chart]
@@ -595,7 +606,7 @@ flowchart TD
     P5 --> B5["ParsedBlock: source_order 5"]
 ```
 
-An otherwise empty paragraph containing an image does not create an empty block. A paragraph containing both native text and an image creates both records in run order. `paragraph_index`, `run_index`, `table_index`, `row_index`, and `column_index` are physical 1-based locators; they are not substitutes for `source_order`.
+An otherwise empty paragraph containing an image does not create an empty block. A paragraph containing both native text and an image creates both records in run order. `body_child_index` is the required one-based physical anchor for top-level body paragraphs and tables; every native body child consumes an index even when it produces no record. A table-row locator additionally uses one-based `physical_row_index`. These fields are not substitutes for `source_order`.
 
 ### Paragraph and logical-block policy
 
@@ -611,24 +622,20 @@ One logical table row produces one `ParsedBlock(block_type=table_row)`. `metadat
 "cells": [
   {
     "column_start": 1,
-    "column_end": 2,
-    "row_start": 1,
-    "row_end": 1,
-    "text": "Question",
-    "merge_origin": true
+    "column_span": 2,
+    "row_span": 1,
+    "text": "Question"
   },
   {
     "column_start": 3,
-    "column_end": 3,
-    "row_start": 1,
-    "row_end": 1,
-    "text": "Answer",
-    "merge_origin": true
+    "column_span": 1,
+    "row_span": 1,
+    "text": "Answer"
   }
 ]
 ```
 
-Horizontal merges (`w:gridSpan`) expand `column_end`; vertical merges (`w:vMerge`) expand `row_end` on the origin cell. Continuation cells must not duplicate origin text. If merge topology cannot be reconstructed reliably, the parser preserves recoverable text and emits `INVALID_TABLE_MERGE` with `impact=CONTENT_LOSS`.
+Horizontal merges (`w:gridSpan`) increase `column_span`; vertical merges (`w:vMerge`) increase `row_span` on the origin cell. Continuation cells must not duplicate origin text. If merge topology cannot be reconstructed reliably, the parser preserves recoverable text and emits `INVALID_TABLE_MERGE` with `impact=CONTENT_LOSS`.
 
 ### DOCX object mapping
 
@@ -648,8 +655,7 @@ Asset locator baseline:
 {
   "type": "docx",
   "body_child_index": 4,
-  "paragraph_index": 12,
-  "run_index": 2,
+  "physical_run_index": 2,
   "relationship_id": "rId8"
 }
 ```
@@ -664,7 +670,7 @@ External references remain native paragraph/list-item blocks plus one `LinkRecor
 {
   "schema_version": "1.0",
   "document_id": "docx_review_001",
-  "block_id": "docx_review_001_b0009",
+  "block_id": "docx_review_001_b_613e2ff9ce7c60bfe24dc22c33460832",
   "source_type": "docx",
   "block_index": 9,
   "source_order": 9,
@@ -674,27 +680,34 @@ External references remain native paragraph/list-item blocks plus one `LinkRecor
   "related_asset_ids": [],
   "locator": {
     "type": "docx",
+    "element_type": "table_row",
     "body_child_index": 1,
-    "table_index": 1,
-    "row_index": 5
+    "physical_row_index": 5
   },
   "metadata": {
-    "language": "en",
+    "table_id": "docx_review_001_table_01",
+    "row_index": 5,
     "cells": [
       {
         "column_start": 1,
-        "column_end": 1,
-        "row_start": 5,
-        "row_end": 5,
-        "text": "Q5 ___ are general computers that can learn algorithms to map input sequences to output sequences? A. CNN B. LSTM C. RNN D. None of these",
-        "merge_origin": true
+        "column_span": 1,
+        "row_span": 1,
+        "text": "Q5 ___ are general computers that can learn algorithms to map input sequences to output sequences? A. CNN B. LSTM C. RNN D. None of these"
       }
     ]
   }
 }
 ```
 
-DOCX-specific issues include `INVALID_READING_ORDER`, `INVALID_TABLE_MERGE`, `BROKEN_RELATIONSHIP`, `UNSUPPORTED_WORD_DRAWING`, and `UNSUPPORTED_EMBEDDED_OBJECT`.
+DOCX native locator policy:
+
+- The `paragraph` variant uses `body_child_index` and optional native `w14:paraId` as `paragraph_id`.
+- The `table_row` variant uses `body_child_index` and `physical_row_index`; physical and logical row indices may differ.
+- Main-body top-level paragraphs and table rows are the supported v1 granularity. Cell paragraphs remain in `metadata.cells` rather than producing duplicate blocks.
+- DOCX is reflowable. Native `docx_v1` locators never contain page numbers, bounding boxes, or X/Y coordinates. Geometry belongs to a future rendered-document profile tied to an immutable rendered artifact.
+- Nested tables and textbox text inside the main body produce issues according to recoverability; headers, footers, notes, comments, footnotes, and endnotes are outside `docx_v1`.
+
+DOCX-specific issues include `INVALID_READING_ORDER`, `INVALID_TABLE_MERGE`, `BROKEN_RELATIONSHIP`, `UNSUPPORTED_NESTED_TABLE`, `UNSUPPORTED_TEXTBOX`, `UNSUPPORTED_WORD_DRAWING`, and `UNSUPPORTED_EMBEDDED_OBJECT`.
 
 ## 12. Common text-source locator
 
@@ -702,12 +715,24 @@ DOCX-specific issues include `INVALID_READING_ORDER`, `INVALID_TABLE_MERGE`, `BR
 
 ```json
 {
+  "type": "markdown",
   "start_line": 120,
   "end_line": 124
 }
 ```
 
-Both indices are required, 1-based, inclusive, and refer to the decoded source snapshot identified by `source.sha256`. `end_line` must be greater than or equal to `start_line`. A source-version or decoding change requires regenerated locators.
+Both indices are required, 1-based, inclusive, and refer to one contiguous span in the decoded source snapshot identified by `source.sha256`. `end_line` must be greater than or equal to `start_line`. Every physical line, including blank lines, participates in numbering; parsing and text normalization never renumber locators. A source-version or decoding change requires regenerated locators.
+
+The locator spans the complete native construct while `ParsedBlock.text` contains its searchable native content. For example, a fenced Markdown code block locator includes both fences, while block text contains code content and metadata may preserve an explicitly declared language. A block quote locator includes the physical quote-marker lines even when extracted text removes those structural markers.
+
+One block never merges disjoint source regions. A comment or unsupported node separating two text regions results in separate blocks/records rather than `line_ranges[]`. If a reliable line span cannot be recovered, the parser does not publish the block and emits `ParseIssue(impact=CONTENT_LOSS)`.
+
+Line counting rules:
+
+- UTF BOM does not create a line.
+- CRLF and LF are line boundaries.
+- A final line without a trailing newline still counts.
+- Blank separator lines are counted physically even when they are outside the block span.
 
 Shared implementation utilities may normalize whitespace, create line locators and records, and detect language. They must not erase the distinction between syntax-driven Markdown parsing and conservative line-driven TXT parsing.
 
@@ -722,9 +747,9 @@ Shared implementation utilities may normalize whitespace, create line locators a
 | ATX/setext heading | `ParsedBlock(block_type=heading)` | Preserve explicit level and update `heading_path` |
 | Paragraph | `ParsedBlock(block_type=paragraph)` | Preserve inline text and line span |
 | Ordered/unordered list item | `ParsedBlock(block_type=list_item)` | Preserve nesting depth and source marker |
-| Fenced/indented code | `ParsedBlock(block_type=code_block)` | Preserve code text, fence info/language, and whitespace |
+| Fenced/indented code | `ParsedBlock(block_type=code_block)` | Locator spans the complete construct; preserve code text, explicitly declared language, and meaningful whitespace |
 | Block quote | `ParsedBlock(block_type=quote)` | Preserve quoted text and nesting depth |
-| Table | `ParsedBlock(block_type=table_row)` | Preserve explicit column positions and header/body role |
+| Table | `ParsedBlock(block_type=table_row)` | Preserve the logical cells and explicit column positions |
 | External/internal hyperlink | `LinkRecord` | Reference the containing block; do not fetch the target |
 | Local image reference | `AssetRecord(image)` + `LinkRecord(local_file)` | Preserve alt text and path; resolver/extractor handles the target later |
 | Remote image reference | `AssetRecord(image)` + `LinkRecord(external)` | Preserve occurrence without network access |
@@ -739,7 +764,7 @@ Malformed link or image syntax must not be silently repaired. The parser preserv
 {
   "schema_version": "1.0",
   "document_id": "md_interview_001",
-  "block_id": "md_interview_001_b0042",
+  "block_id": "md_interview_001_b_f7e24ee82e436d9f46f70554630302b2",
   "source_type": "markdown",
   "block_index": 42,
   "source_order": 42,
@@ -758,9 +783,7 @@ Malformed link or image syntax must not be silently repaired. The parser preserv
     "start_line": 638,
     "end_line": 638
   },
-  "metadata": {
-    "language": "vi"
-  }
+  "metadata": {}
 }
 ```
 
@@ -798,7 +821,7 @@ Underlining, capitalization, repeated spaces, alignment, or a path-like token al
 {
   "schema_version": "1.0",
   "document_id": "txt_aiops_001",
-  "block_id": "txt_aiops_001_b0088",
+  "block_id": "txt_aiops_001_b_a18dbd694fe12e5f0321aef41af01226",
   "source_type": "txt",
   "block_index": 88,
   "source_order": 88,
@@ -823,7 +846,16 @@ Underlining, capitalization, repeated spaces, alignment, or a path-like token al
     "end_line": 238
   },
   "metadata": {
-    "language": "vi"
+    "table_id": "txt_aiops_001_table_01",
+    "row_index": 1,
+    "cells": [
+      {
+        "column_start": 1,
+        "column_span": 2,
+        "row_span": 1,
+        "text": "OpenSearch | Phiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license."
+      }
+    ]
   }
 }
 ```
@@ -832,11 +864,4 @@ TXT-specific issues include `INVALID_TEXT_ENCODING`, `AMBIGUOUS_STRUCTURE_PRESER
 
 ## 15. Next decision
 
-The Common Parser subsystem and all five baseline format profiles are frozen. Changes to required fields, status algorithms, record identity scope, artifact integrity rules, cross-record relationships, unified source-order semantics, or format mappings require an explicit contract-version decision.
-
-The next step is implementation planning:
-
-1. Define JSON Schemas for `ParseRequest`, `ParseManifest`, `ParsedBlock`, `AssetRecord`, `LinkRecord`, and `ParseIssue`.
-2. Create parser fixtures and expected ParseBundles for the five corpus formats.
-3. Implement the shared record/locator utilities and one format parser at a time.
-4. Validate output integrity, source order, locators, and issue-to-status propagation before chunking experiments.
+The Common Parser subsystem and all five baseline format profiles are frozen at the design level. All five ParsedBlock locator profiles are now defined. The next step is the final cross-field and cross-profile consistency review for ParsedBlock before encoding JSON Schema. Schema implementation, fixtures, expected ParseBundles, and parser code begin only after that review passes.
