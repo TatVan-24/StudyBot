@@ -19,7 +19,7 @@ Status:
 |---|---|
 | `ParseRequest` | Frozen v1 |
 | `ParseManifest` | Frozen v1 |
-| `ParsedBlock` | In progress — common fields, metadata, and heading path frozen; locators pending |
+| `ParsedBlock` | Final Consistency Review — common fields, metadata, heading path, and all five locator profiles frozen |
 | `AssetRecord` | Pending |
 | `LinkRecord` | Pending |
 | `ParseIssue` | Pending |
@@ -320,9 +320,9 @@ Status does not depend on `severity`. An extracted image awaiting Vision enrichm
 | `source_order` | Yes | integer | `>= 1` | Unique and contiguous across recognized flow-bearing `ParsedBlock` and `AssetRecord` records |
 | `block_type` | Yes | string enum | `title`, `heading`, `paragraph`, `list_item`, `table_row`, `caption`, `code_block`, or `quote` | Selects exactly one metadata variant |
 | `text` | Yes | string | Non-empty after block-type-aware canonicalization; contains only native text | Empty table cells remain in `metadata.cells[].text`; non-text-only objects become assets rather than empty blocks |
-| `heading_path` | Yes | array of objects | May be empty; detailed semantics are pending | Must represent only reliably detected source hierarchy |
+| `heading_path` | Yes | array of objects | May be empty; frozen semantics are defined in Section 6.3 | Must represent only reliably detected source hierarchy |
 | `related_asset_ids` | Yes | array of strings | May be empty; no duplicates | Every ID must resolve symmetrically to an AssetRecord in the same document and bundle |
-| `locator` | Yes | object | Shape is selected by `source_type`; detailed variants are pending | Must resolve to the physical source and participate in deterministic identity |
+| `locator` | Yes | object | Shape is selected by `source_type` | Must resolve to the physical source; only its frozen stable projection participates in deterministic identity |
 | `metadata` | Yes | object | Shape is selected by `block_type`; Section 7 is frozen v1 | Bundle validator enforces list, table, caption, and relationship invariants |
 
 ### 6.1 Parallel index namespaces
@@ -383,14 +383,27 @@ Canonical native content is block-type specific:
 
 | `block_type` | Included native content/structure |
 | --- | --- |
-| `title`, `heading`, `paragraph` | Canonical text |
+| `title`, `paragraph` | Canonical text |
+| `heading` | Canonical text plus `heading_path[-1].level` and `heading_path[-1].role` |
 | `list_item` | Canonical text, `list_type`, `list_level`, and native `marker` when present |
-| `table_row` | Canonical text plus ordered cells, positions, spans, and cell text |
+| `table_row` | Ordered cells only: `column_start`, `column_span`, `row_span`, and canonical cell text; exclude `ParsedBlock.text` |
 | `caption` | Canonical text and `caption_kind` |
 | `code_block` | Code with meaningful whitespace preserved, plus native declared `language` when present |
 | `quote` | Canonical text and `quote_level` |
 
-`marker` and `language` participate only when explicitly present in the source. The parser must not infer either field merely to construct identity.
+`marker` and `language` participate only when explicitly present in the source. The parser must not infer either field merely to construct identity. A native code-language declaration is canonicalized by trimming surrounding whitespace and applying Unicode-aware lowercase. Alias expansion is forbidden: values such as `py`/`python`, `js`/`javascript`, and `c++`/`cpp` remain distinct.
+
+For `block_type = heading`, the final `heading_path` item describes the heading block itself rather than surrounding context. Canonical native content therefore includes its canonical text, normalized `level`, and deterministic `role`. Ancestor items `heading_path[0..n-2]` remain excluded. The final item's text must equal the block text under the frozen canonical text rules, so it is not hashed as a second independent copy.
+
+For `table_row`, `metadata.cells` is the authoritative native content and structure. `ParsedBlock.text` is excluded from identity because it is a searchable projection whose separators are not native table identity. Cells are ordered by ascending `column_start`; each native logical cell appears once, including cells with empty text and cells spanning multiple rows or columns.
+
+Every parser produces `table_row.text` deterministically as:
+
+```text
+join(ordered cells[].text, "\t")
+```
+
+Cell text first follows the applicable native text normalization rules, including LF line endings, Unicode NFC, and preserved meaningful content. Empty cells remain empty tab-separated segments. A spanning cell contributes its text once rather than being expanded across its span. The projection is required for consistent search/embedding output but is never hashed again after the authoritative cell structure has been included.
 
 Canonicalization rules:
 
@@ -399,17 +412,36 @@ Canonicalization rules:
 - Code preserves indentation and internal whitespace; only line endings and Unicode form are normalized.
 - Objects use stable key ordering; arrays whose order carries native meaning retain that order.
 
+`canonical_locator` is a minimal stable projection of the public locator, not a copy of the complete provenance object:
+
+| Source/variant | Fields included in `canonical_locator` | Public locator fields excluded from identity |
+| --- | --- | --- |
+| PDF | `type`, ordered `pdf_pages` projected from `locations[].pdf_page`, `occurrence_index` | `printed_page`, `bounding_boxes` |
+| PPTX `text_paragraph` | `type`, `element_type`, `slide`, `shape_path`, `physical_paragraph_index` | `shape_id`, `shape_bounding_box` |
+| PPTX `table_row` | `type`, `element_type`, `slide`, `shape_path`, `physical_row_index` | `shape_id`, `shape_bounding_box` |
+| DOCX `paragraph` | `type`, `element_type`, `body_child_index` | `paragraph_id` |
+| DOCX `table_row` | `type`, `element_type`, `body_child_index`, `physical_row_index` | None |
+| Markdown | `type`, `start_line`, `end_line` | None |
+| TXT | `type`, `start_line`, `end_line` | None |
+
+`pdf_pages` is an internal canonical projection only; it is not a new public locator field. It preserves the already validated strictly increasing page order. The PPTX `shape_id` remains required public native cross-check evidence: the object reached through `slide + shape_path` must have that ID, but the path plus the physical paragraph/row index already uniquely identifies the block, so `shape_id` is excluded by minimality.
+
+Canonical projection must reject missing or extra identity fields rather than silently copying the public locator. Public provenance may improve—for example geometry becomes available—without changing `block_id` when the stable physical identity and native content remain unchanged.
+
 The following are excluded because they describe processing order, grouping, surrounding context, relationships, or a parse run rather than the block's native identity:
 
 ```text
 block_index, source_order
 list_id, item_index, table_id
-heading_path
+heading_path ancestors; for a heading block, only the final item's level and role are included
 related_asset_ids, caption target
 parse_job_id, created_at, parser build
+printed_page, PDF bounding_boxes
+PPTX shape_id, PPTX shape_bounding_box
+DOCX paragraph_id
 ```
 
-These identity rules are frozen v1. They are reopened only if fixtures or validation demonstrate a contract defect.
+`PPTX_SHAPE_ID_IDENTITY_REDUNDANCY` is closed: `shape_id` remains required in the public PPTX locator and is excluded from `canonical_locator` as redundant native validation evidence. `TABLE_ROW_TEXT_CANONICALIZATION` is closed: ordered `metadata.cells` defines table-row identity, while `ParsedBlock.text` is its required deterministic tab-separated projection and is excluded from the hash. `HEADING_SELF_STRUCTURE_IDENTITY` is closed: a heading hashes its own final normalized level and role but not ancestor hierarchy. The block-specific `block_id` and canonicalization review is complete for v1; it is reopened only if fixtures or validation demonstrate a contract defect.
 
 ### 6.3 `heading_path` semantics — frozen v1
 
@@ -588,7 +620,7 @@ The following block types require an empty object:
 | `heading` | `{}` | Level, role, and text are authoritative in `heading_path[-1]` |
 | `paragraph` | `{}` | Baseline paragraph has no additional native structure |
 
-For `heading`, the bundle validator additionally requires a non-empty `heading_path` and `heading_path[-1].text == text`.
+For `heading`, the bundle validator additionally requires a non-empty `heading_path`; its final item must equal the heading block's authoritative native `level`, `role`, and `text`. These values are not duplicated in metadata.
 
 ### 7.2 `list_item` metadata
 
@@ -627,6 +659,8 @@ max(column_start + column_span - 1)
 
 across all cells belonging to the same `table_id`. It rejects overlapping cell ranges, invalid row spans, missing trailing empty cells, and inconsistent logical-grid coverage. `TableRecord` and stored `logical_column_count` are intentionally deferred because they add no information that cannot currently be derived.
 
+For every `table_row`, the validator recomputes `ParsedBlock.text` by joining the ordered `cells[].text` values with one tab character and requires exact equality after the frozen text-normalization rules. A mismatch makes the record invalid even though `ParsedBlock.text` does not participate in `block_id`.
+
 ### 7.4 `caption` metadata
 
 | Field | Required | Type | Rule |
@@ -650,9 +684,9 @@ For an asset target, `target.id` must exist in `assets.jsonl`, must be present i
 
 | Field | Required | Type | Rule |
 | --- | ---: | --- | --- |
-| `language` | No | string | Non-empty when present; preserve only an explicitly declared native language |
+| `language` | No | string | Non-empty when present; derived only from an explicit native declaration, then trimmed and lowercased; no alias mapping |
 
-The parser must not infer a programming language from code content. If the source does not declare one reliably, metadata is `{}`.
+The parser must not infer a programming language from code content. If the source does not declare one reliably, metadata is `{}`. Native declarations such as `Python` and ` python ` therefore canonicalize to `python`, while `py` remains `py`. The canonical value participates in code-block identity.
 
 ### 7.6 `quote` metadata
 
@@ -660,7 +694,7 @@ The parser must not infer a programming language from code content. If the sourc
 | --- | ---: | --- | --- |
 | `quote_level` | Yes | integer | `>= 0`; zero is the outermost quote |
 
-A quote block is emitted only when the source exposes a reliable quote structure. Quotation marks inside an ordinary paragraph do not make that paragraph a quote block.
+A quote block is emitted only when the source exposes a reliable native quote structure. `quote_level` is its normalized native nesting depth and participates in canonical native content. One quote block has exactly one level. When a native span changes nesting depth, the parser emits the corresponding quote blocks rather than assigning one ambiguous shared level. Quotation marks inside an ordinary paragraph do not make that paragraph a quote block.
 
 ### 7.7 Duplicate-source-of-truth review
 
@@ -675,6 +709,32 @@ A quote block is emitted only when the source exposes a reliable quote structure
 | Logical column count | Derived from all cells sharing `table_id` | Do not store | Validator recomputes it from the logical grid |
 
 No duplicate field is retained merely for convenience. The caption target is retained because it adds semantic meaning—what the caption describes—while `related_asset_ids` represents the generic block–asset relationship.
+
+### 7.8 Final `block_type` and metadata consistency review
+
+Each `block_type` selects exactly one closed metadata shape:
+
+| `block_type` | Only permitted metadata shape |
+| --- | --- |
+| `title` | `{}` |
+| `heading` | `{}` |
+| `paragraph` | `{}` |
+| `list_item` | `list_id`, `item_index`, `list_type`, `list_level`, optional `marker` |
+| `table_row` | `table_id`, `row_index`, `cells` |
+| `caption` | `caption_kind`, `target` |
+| `code_block` | optional `language`; otherwise `{}` |
+| `quote` | `quote_level` |
+
+Missing required fields, fields belonging to another variant, and unknown fields make the record invalid. A record may satisfy its metadata shape while still making the ParseBundle invalid when a bundle-level relationship fails—for example, a caption targets a missing asset/table, list/table indices are not contiguous, or a bidirectional asset reference is asymmetric.
+
+Final boundary check:
+
+- Metadata contains native/logical structure belonging to the block.
+- Locator contains physical provenance and never duplicates logical row/list hierarchy.
+- `heading_path` contains hierarchy context; heading level/role are not duplicated in metadata.
+- Parse-run identity and artifact information remain in ParseManifest.
+
+No blocking ambiguity remains in `block_type` to metadata selection. This relationship is consistent for ParsedBlock v1.
 
 ## 8. Common locator philosophy — frozen v1
 
@@ -719,12 +779,18 @@ For PDF:
 ```json
 {
   "type": "pdf",
-  "pdf_page": 27,
-  "printed_page": "6"
+  "occurrence_index": 1,
+  "locations": [
+    {
+      "pdf_page": 27,
+      "printed_page": "6",
+      "bounding_boxes": []
+    }
+  ]
 }
 ```
 
-`pdf_page` is the one-based physical file page used by parser/UI logic. `printed_page` is the preserved book page label used in human-facing citation.
+`pdf_page` is the one-based physical file page used by parser/UI logic. `printed_page` is the preserved book page label used in human-facing citation. `occurrence_index` is the parser-normalized physical disambiguator used when otherwise identical PDF blocks occur in the same canonical page span.
 
 ### 8.3 Locator reliability and publication
 
@@ -748,6 +814,7 @@ Indexing text whose required physical provenance cannot be demonstrated is forbi
 | Field | Required | Type | Field/record rule | Bundle/source-level rule |
 | --- | ---: | --- | --- | --- |
 | `type` | Yes | string const | Exactly `pdf` | Must equal `ParsedBlock.source_type` |
+| `occurrence_index` | Yes | integer | `>= 1`; normalized duplicate occurrence ordinal | Unique and contiguous `1..N` inside its duplicate-signature group |
 | `locations` | Yes | array of PageLocation | At least one item | Sorted by strictly increasing `pdf_page`; no duplicate physical page |
 
 One PageLocation represents exactly one physical PDF page touched by the block:
@@ -803,13 +870,38 @@ flowchart LR
     BV --> UF["UI fallback: page-level display or highlight"]
 ```
 
-### 9.5 Valid examples
+### 9.5 PDF identity disambiguation
+
+PDF has no portable native paragraph/object ID. Two final candidate blocks may therefore have identical page spans, block types, and canonical native content. `occurrence_index` resolves that collision without depending on optional geometry or citation labels.
+
+Assignment algorithm:
+
+1. Determine final candidate ParsedBlock boundaries.
+2. Group candidates by canonical page-span signature, `block_type`, and canonical native content.
+3. Sort each group by the deterministic extraction/reading order defined by the immutable parser build/profile.
+4. Assign `occurrence_index = 1..N`.
+
+The ordinal is assigned to final candidate blocks, not raw PDF text objects. A unique signature group still receives `occurrence_index = 1`. It participates in `canonical_locator`; `printed_page` and `bounding_boxes` do not. It is never derived from `block_index` or `source_order`.
+
+Identity guarantee:
+
+```text
+same source.sha256
++ same parser build/profile
++ same contract version
+= deterministic occurrence_index and block_id
+```
+
+Cross-version PDF block matching and identity stability across different parser builds/profiles are outside v1.
+
+### 9.6 Valid examples
 
 One page with a printed label and two physical regions:
 
 ```json
 {
   "type": "pdf",
+  "occurrence_index": 1,
   "locations": [
     {
       "pdf_page": 10,
@@ -828,6 +920,7 @@ Multiple pages, including an unlabeled page and page-level geometry fallback:
 ```json
 {
   "type": "pdf",
+  "occurrence_index": 1,
   "locations": [
     {
       "pdf_page": 10,
@@ -843,13 +936,24 @@ Multiple pages, including an unlabeled page and page-level geometry fallback:
 }
 ```
 
-### 9.6 Invalid examples
+Two otherwise identical blocks in the same page span are disambiguated as separate members of one group:
+
+```json
+{"type":"pdf","occurrence_index":1,"locations":[{"pdf_page":10,"printed_page":"8","bounding_boxes":[]}]}
+```
+
+```json
+{"type":"pdf","occurrence_index":2,"locations":[{"pdf_page":10,"printed_page":"8","bounding_boxes":[]}]}
+```
+
+### 9.7 Invalid examples
 
 Duplicate physical page:
 
 ```json
 {
   "type": "pdf",
+  "occurrence_index": 1,
   "locations": [
     {"pdf_page": 10, "printed_page": "8", "bounding_boxes": []},
     {"pdf_page": 10, "printed_page": "8", "bounding_boxes": []}
@@ -862,6 +966,7 @@ Invalid geometry:
 ```json
 {
   "type": "pdf",
+  "occurrence_index": 1,
   "locations": [
     {
       "pdf_page": 10,
@@ -874,7 +979,9 @@ Invalid geometry:
 }
 ```
 
-The PDF locator is frozen v1. Changes to page grouping, printed-page evidence, coordinate normalization, or required publication provenance require an explicit contract-version decision.
+Invalid ordinal cases include `occurrence_index = 0`, duplicate ordinals inside one signature group, gaps such as `1,3`, and ordinals assigned before final ParsedBlock boundaries are determined.
+
+The PDF locator is frozen v1. `PDF_IDENTITY_COLLISION` is closed by the persisted `occurrence_index` resolution. Changes to page grouping, occurrence grouping/order, printed-page evidence, coordinate normalization, or required publication provenance require an explicit contract-version decision.
 
 ## 10. PPTX locator field rules — frozen v1
 
@@ -1260,4 +1367,196 @@ The Markdown and TXT locators are frozen v1. Changes to line representation, inc
 
 ## 13. Next ParsedBlock work
 
-Run the final consistency review across common fields, metadata, heading paths, and all five locator profiles. Only after that review passes should `parsed-block.schema.json` be encoded.
+### 13.1 Final `block_type` and locator-variant consistency review
+
+`block_type` describes the block's semantic/logical structure. The locator describes the native physical construct that contains it. These two classifications must be compatible without duplicating one another.
+
+| Source | `block_type` | Required locator compatibility |
+| --- | --- | --- |
+| PPTX | `table_row` | `element_type = table_row` |
+| PPTX | Any other v1 block type | `element_type = text_paragraph` |
+| DOCX | `table_row` | `element_type = table_row` |
+| DOCX | Any other v1 block type | `element_type = paragraph` |
+| PDF | Any supported type | PDF locator; source validation must prove the corresponding native construct |
+| Markdown | Any supported type | Markdown line span covering the complete native syntax construct |
+| TXT | Any supported type | TXT line span consumed by the deterministic profile rule |
+
+PPTX and DOCX mappings are biconditional:
+
+```text
+PPTX:
+block_type = table_row  iff  locator.element_type = table_row
+block_type != table_row iff  locator.element_type = text_paragraph
+
+DOCX:
+block_type = table_row  iff  locator.element_type = table_row
+block_type != table_row iff  locator.element_type = paragraph
+```
+
+Therefore a logical PPTX list item may validly use a physical `text_paragraph` locator, and a logical DOCX heading may validly use a physical `paragraph` locator. Conversely, a locator pointing to a table row cannot be paired with `paragraph`, `caption`, or another non-table block type.
+
+PDF, Markdown, and TXT do not add a synthetic `element_type`. Their locator retains only physical provenance; source validation proves construct compatibility. Text that merely looks tabular is insufficient: `block_type = table_row` requires deterministic evidence of a native/supported table construct under the active parser profile.
+
+No blocking ambiguity remains in `block_type` to locator-variant selection. This relationship is consistent for ParsedBlock v1.
+
+### 13.2 Final ParsedBlock and AssetRecord relationship review
+
+The generic block–asset relationship is optional many-to-many:
+
+```text
+ParsedBlock.related_asset_ids: 0..N
+AssetRecord.native_context.related_block_ids: 0..N
+```
+
+An empty array declares no relationship and is valid for standalone blocks and assets. Every declared relationship is mandatory and symmetric: block `B` contains asset `A` if and only if asset `A` contains block `B`. Both records must exist in the same ParseBundle, share the same `document_id`, and contain no duplicate IDs. A missing target is dangling; a one-sided relationship is asymmetric; both make the bundle invalid.
+
+This relationship is consistent for ParsedBlock v1.
+
+### 13.3 Final caption-to-asset relationship review
+
+A figure caption has exactly one primary semantic asset target and one or more generic asset relationships:
+
+```text
+caption.target.type = asset
+caption.target.id belongs to caption.related_asset_ids
+```
+
+The target constraint is subset membership, not array equality. Additional assets may appear in `related_asset_ids`, but only `target.id` means “the asset described by this caption.” Downstream consumers must never infer that every generically related asset is also a caption target.
+
+For `caption_kind = figure`:
+
+1. `target.type` is exactly `asset`.
+2. `target.id` resolves to exactly one AssetRecord in the same bundle/document.
+3. `target.id` appears in `related_asset_ids`.
+4. `related_asset_ids` contains `1..N` unique, resolvable IDs.
+5. Every related AssetRecord reverse-references the caption block.
+6. Exactly one semantic target exists in v1.
+
+The caption-to-asset relationship is consistent for ParsedBlock v1.
+
+### 13.4 Final caption-to-table relationship review
+
+For `caption_kind = table`, `target.type` is exactly `table` and `target.id` resolves to a logical table identity rather than one row record. Resolution is bundle-local: at least one `ParsedBlock(block_type=table_row)` in the same document must carry `metadata.table_id = target.id`.
+
+`table_id` is unique per logical table within one document. Every row sharing a `table_id` belongs to the same deterministically reconstructed native/logical table; two independent native tables must use different IDs. A PDF table may continue across pages under one `table_id` only when the parser build/profile has deterministic continuation evidence.
+
+Within one table group, rows have unique contiguous logical `row_index = 1..N`. One caption has exactly one target; multiple captions may target the same table. V1 requires no reverse caption field on rows because no TableRecord exists.
+
+`related_asset_ids` remains independent from a table target. It may be empty or contain generic asset relationships, each of which still obeys mandatory block–asset symmetry. A table ID is never inserted into `related_asset_ids`.
+
+The caption-to-table relationship is consistent for ParsedBlock v1.
+
+### 13.5 Final document namespace consistency review
+
+One ParseBundle represents exactly one document. The following values must be identical:
+
+```text
+ParseRequest.document_id
+= ParseManifest.document_id
+= every ParsedBlock.document_id
+= every AssetRecord.document_id
+= every LinkRecord.document_id
+= every ParseIssue.document_id
+```
+
+All resolution is strictly bundle/document-local:
+
+- Block–asset references resolve only against records in the same ParseBundle and `document_id`.
+- Caption asset targets resolve only against local AssetRecords.
+- Caption table targets resolve only against local `table_row` groups.
+- LinkRecord block/asset references resolve only locally.
+- ParseIssue related-record references resolve only locally when present.
+- `table_id` and `list_id` are document-scoped logical namespaces.
+- A matching ID in another document, bundle, index, or database must never be used as fallback resolution.
+
+A record whose `document_id` differs from the manifest makes the bundle invalid even when it has no cross-record references. A cross-document reference is invalid even when the target ID exists globally.
+
+Document namespace consistency has no remaining ambiguity for Parser Contract v1.
+
+### 13.6 Final global ParseBundle integrity review
+
+Global validation runs after individual record-shape validation and uses only records from the current ParseBundle/document.
+
+#### Uniqueness
+
+- `block_id`, `asset_id`, `link_id`, and `issue_id` are unique in their record namespaces. An ID used by an untyped local reference such as `ParseIssue.related_record_id` must resolve to exactly one record in the bundle-wide record union.
+- Duplicate values inside any reference array are invalid.
+- Repeated `list_id` and `table_id` values are expected only for members of one logical list/table group.
+- One `list_id` cannot represent two independent logical lists; one `table_id` cannot represent two independent logical tables.
+
+#### Referential integrity
+
+- Every non-empty `related_asset_ids` entry resolves to an AssetRecord.
+- Every non-empty AssetRecord `related_block_ids` entry resolves to a ParsedBlock.
+- Caption asset targets resolve to AssetRecords; caption table targets resolve to one logical table group.
+- LinkRecord source references resolve through their typed block/asset fields.
+- A present ParseIssue related-record reference resolves to exactly one local record.
+- Resolution never guesses, performs fuzzy matching, or falls back to another bundle/document.
+
+#### Relationship integrity
+
+- Every declared block–asset relationship is symmetric.
+- A figure caption's primary target belongs to `related_asset_ids`, and every generic asset relation is symmetric.
+- A table caption resolves its target table group; row-to-caption reverse fields are not required in v1.
+- Target type and `caption_kind` combinations follow the closed metadata variant rules.
+- Any cross-document relationship or mismatched record `document_id` is invalid.
+
+Final decision matrix:
+
+| Bundle condition | Result |
+| --- | --- |
+| Duplicate record identity | Reject |
+| Duplicate ID inside a reference array | Reject |
+| One logical group ID reused for independent groups | Reject |
+| Dangling reference | Reject |
+| Required symmetric relation is one-sided | Reject |
+| Wrong target/record type | Reject |
+| Cross-document reference | Reject |
+| Standalone block or asset with an empty relationship array | Allow |
+| Multiple blocks related to one asset | Allow |
+| One block related to multiple assets | Allow |
+| Multiple captions targeting one logical table | Allow |
+
+No contradiction remains among uniqueness, referential-integrity, and relationship-integrity rules. Global ParseBundle integrity is consistent for v1. Relationship-specific review is closed unless fixtures demonstrate a contract defect.
+
+### 13.7 Final index-invariant review
+
+Index validation separates logical/output sequences from physical/native provenance. Contiguity applies only where the contract explicitly reconstructs a logical/output sequence.
+
+| Index | Scope | Frozen v1 invariant |
+| --- | --- | --- |
+| `block_index` | `blocks.jsonl` | One-based, unique, contiguous `1..N` |
+| `source_order` | Flow-bearing ParsedBlocks and AssetRecords | One-based, unique, contiguous `1..N` |
+| `item_index` | One `list_id` | One-based, unique, contiguous `1..N` in source order |
+| `metadata.row_index` | One `table_id` | One-based, unique, contiguous `1..N` logical row order |
+| PDF `occurrence_index` | One duplicate-signature group | One-based, unique, contiguous `1..N` in deterministic extraction/reading order |
+| PPTX `physical_paragraph_index` / `physical_row_index` | Native text frame/table | One-based; gaps allowed; never renumbered |
+| Every PPTX `shape_path` component | Native shape-tree level | One-based native child position; gaps among published records allowed; never renumbered |
+| DOCX `body_child_index` / `physical_row_index` | Native body/table | One-based; gaps allowed; never renumbered |
+| Markdown/TXT `start_line` / `end_line` | Decoded source snapshot | One-based physical lines; blank/unsupported lines still count; never renumbered |
+| PDF `pdf_page` | Immutable PDF snapshot | One-based physical file page; published page values need not form a global contiguous sequence |
+
+```text
+Logical/output sequences
+→ validator requires contiguous 1..N
+
+Physical/native provenance
+→ validator checks source resolution
+→ gaps are allowed
+→ filtering never renumbers positions
+```
+
+`occurrence_index` is a normalized physical disambiguator but intentionally follows the logical/output validation rule within its narrowly defined duplicate-signature group. It is never substituted with `block_index` or `source_order`.
+
+No index namespace is overloaded, and no contiguity rule is applied to physical provenance. Index invariants are consistent for v1.
+
+### 13.8 Final conformance-case result
+
+The five valid and five invalid design-level contract cases are defined in `08-parser-contract-cases.md`. They cover all five formats plus metadata, locator, heading, relationship, and index failures. No case requires a new field or reinterpretation of a frozen rule.
+
+```text
+Final Consistency Review: PASS
+ParsedBlock Contract v1: FROZEN
+```
+
+The next step is implementation of `parsed-block.schema.json`, followed by executable bundle validation. Parser extraction fixtures remain a later, separate step.
