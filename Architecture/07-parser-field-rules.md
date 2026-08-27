@@ -1559,4 +1559,22 @@ Final Consistency Review: PASS
 ParsedBlock Contract v1: FROZEN
 ```
 
-The next step is implementation of `parsed-block.schema.json`, followed by executable bundle validation. Parser extraction fixtures remain a later, separate step.
+The ParsedBlock schema and baseline ParseBundle validator are now implemented. The implementation boundary for the personal-project MVP is intentionally narrower than the complete frozen contract:
+
+```text
+Implemented MVP:
+- ParsedBlock schema validation
+- required artifact existence
+- document_id consistency
+- block_id uniqueness
+- block_index continuity
+
+Deferred until demonstrated by failure:
+- Asset/Block symmetry
+- Link and caption resolution
+- artifact hashes
+- block_id recomputation
+- advanced bundle integrity
+```
+
+The validation-engineering stage stops at this boundary. The next implementation step is a TXT/Markdown vertical slice that produces validated `blocks.jsonl`, followed by chunking and retrieval experiments. Deferred rules remain part of the frozen specification and are implemented only when a real fixture or evaluation failure requires them.
