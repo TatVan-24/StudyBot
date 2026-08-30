@@ -182,7 +182,8 @@ flowchart TD
 Common invariants:
 
 - `block_id` is unique within one ParseBundle.
-- `block_id` is derived from `document_id`, a canonical physical locator, and normalized native content. It must not be derived from `block_index`, `source_order`, `parse_job_id`, or `created_at`.
+- `block_id` is derived from `document_id`, `source_type`, `block_type`, a minimal stable projection of the physical locator, and block-type-aware canonical native content. It must not hash the complete public locator or derive identity from `block_index`, `source_order`, `parse_job_id`, or `created_at`.
+- Stable locator projection includes PDF page numbers plus `occurrence_index`; PPTX slide, shape path, element variant, and physical paragraph/row index; DOCX body child, element variant, and physical row index when applicable; or Markdown/TXT source line span. Citation labels, geometry, PPTX `shape_id`, and optional DOCX `paragraph_id` remain provenance/cross-check evidence but do not participate in `block_id`.
 - Record IDs are deterministic when `source_sha256`, canonical locator/content normalization, `parser_profile`, parser name/build ID, and `contract_version` are unchanged. `parse_job_id` and `created_at` do not participate in record-ID generation, so an identical rerun produces identical record IDs.
 - Record IDs are not guaranteed to remain stable when the source, profile, parser build, or contract version changes. This rule also applies to `asset_id`, `link_id`, and `issue_id`.
 - All human-facing indices are 1-based.
@@ -192,9 +193,13 @@ Common invariants:
 - A detected asset that cannot be extracted must retain its `source_order` through an `AssetRecord` in `DETECTED_ONLY` or `FAILED` state; the Parser must not silently drop the object and renumber later content.
 - Format profiles define how native objects receive `source_order`; downstream code reconstructs source flow by merging blocks and assets on this field.
 - `text` preserves source meaning; normalization may fix whitespace but must not generate new facts.
+- For `table_row`, `metadata.cells` is authoritative native content and structure. `text` is the deterministic tab-separated projection of ordered cell text for search/embedding and is excluded from `block_id`; a projection mismatch is invalid.
+- For `code_block`, `metadata.language` exists only for an explicit native language declaration. Its canonical value is trimmed and lowercased without alias mapping and participates in `block_id`; inferred language belongs outside the Parser contract.
+- For `quote`, `quote_level` is required normalized native nesting depth and participates in `block_id`. One quote block represents one reliable level; a native depth transition produces corresponding blocks rather than one ambiguous shared level.
 - `heading_path` is always present, ordered root-to-leaf, and may be `[]` when no reliable heading exists.
 - Heading levels increase from parent to child. The final item is the nearest reliable heading containing the block.
 - For `block_type=heading`, the final `heading_path` item is the heading block itself. For other block types, it is the nearest containing heading.
+- A heading block includes its own final `heading_path` item's normalized `level` and deterministic `role` in canonical native content. Ancestor heading-path items remain surrounding context and are excluded from `block_id`.
 - Document title is stored in the corpus manifest and is not repeated in every `heading_path`.
 - `metadata` follows the conditional schema for the selected `block_type`; it is not an unrestricted extension bag.
 - `related_asset_ids` is required as an array and may be empty. Persisted block-to-asset references must be symmetric with `AssetRecord.native_context.related_block_ids`.
@@ -357,6 +362,7 @@ Required locator fields:
 
 ```text
 type = pdf
+occurrence_index: integer >= 1
 locations: array with at least one PageLocation
 
 PageLocation:
@@ -366,6 +372,8 @@ bounding_boxes: array with zero or more normalized boxes
 ```
 
 `locations` is sorted by strictly increasing `pdf_page`, and one physical page appears at most once per block. `bounding_boxes` preserves reliable native reading order within its page. An empty array means page-level provenance is reliable but precise geometry is unavailable; this does not cause content loss.
+
+`occurrence_index` is a required normalized physical disambiguator for final candidate ParsedBlocks that share the same canonical page-span signature, `block_type`, and canonical native content. After block boundaries are final, the parser groups candidates by that signature, sorts each group by the deterministic extraction/reading order defined by the immutable parser build/profile, and assigns contiguous one-based values `1..N`. A unique block therefore uses `1`. The ordinal is not derived from raw PDF text objects, `block_index`, `source_order`, `printed_page`, or geometry, and it participates in the canonical locator used by `block_id`.
 
 `printed_page` evidence is accepted from reliable PDF PageLabels metadata or from a deterministic printed-number rule packaged in the immutable parser build. Offset extrapolation is forbidden unless that offset itself is established by a deterministic versioned rule with explicit evidence. When evidence is insufficient, the required field is `null`; an empty string or invented label is invalid.
 
@@ -405,6 +413,7 @@ Each box represents one contiguous physical region. Exact duplicate boxes, zero-
   "related_asset_ids": [],
   "locator": {
     "type": "pdf",
+    "occurrence_index": 1,
     "locations": [
       {
         "pdf_page": 70,
@@ -445,6 +454,7 @@ PDF-specific invariants:
 - Required figure content that cannot be preserved produces `impact=CONTENT_LOSS` and therefore a `PARTIAL` parse.
 - Assets and links reuse the same page-grouped provenance principle where applicable: one page location with zero or more physical regions, rather than duplicate page entries.
 - Missing required `pdf_page` provenance prevents publication of the affected record and produces `ParseIssue(impact=CONTENT_LOSS)`; `printed_page = null` and `bounding_boxes = []` remain valid.
+- Within every duplicate-signature group, `occurrence_index` is unique and contiguous `1..N`; changing parser build/profile may change extraction order and identity, while the same source snapshot, build/profile, and contract version must reproduce the same ordinal and `block_id`.
 
 Example source mapping:
 
@@ -826,7 +836,7 @@ Underlining, capitalization, repeated spaces, alignment, or a path-like token al
   "block_index": 88,
   "source_order": 88,
   "block_type": "table_row",
-  "text": "OpenSearch | Phiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license.",
+  "text": "OpenSearch\tPhiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license.",
   "heading_path": [
     {
       "level": 2,
@@ -851,9 +861,15 @@ Underlining, capitalization, repeated spaces, alignment, or a path-like token al
     "cells": [
       {
         "column_start": 1,
-        "column_span": 2,
+        "column_span": 1,
         "row_span": 1,
-        "text": "OpenSearch | Phiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license."
+        "text": "OpenSearch"
+      },
+      {
+        "column_start": 2,
+        "column_span": 1,
+        "row_span": 1,
+        "text": "Phiên bản AWS fork lại của Elasticsearch sau khi Elastic đổi license."
       }
     ]
   }
