@@ -2,6 +2,22 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import unicodedata
+from src.parser.block_id import (
+    compute_block_id,
+    build_canonical_native_content,
+)
+
+_LIST_MARKER_RE = re.compile(r'^(\d+[\.\\)] |\+ |\* |- )')
+
+
+def _raw_marker(text):
+    """Extract native list marker, or None if not reliably present."""
+    stripped = text.strip()
+    m = _LIST_MARKER_RE.match(stripped)
+    if m:
+        return m.group(1).strip()
+    return None
 
 
 def read_lines(path):
@@ -143,6 +159,8 @@ def to_parsed_blocks(raw_blocks, document_id):
     heading_stack = []
     list_counter = 0
     table_counter = 0
+    list_state = None      # {"list_id", "list_type", "list_level", "next_item_index"}
+    table_state = None     # {"table_id", "next_row_index"}
 
     for idx, raw in enumerate(raw_blocks, start=1):
         btype = raw["block_type"]
@@ -152,18 +170,22 @@ def to_parsed_blocks(raw_blocks, document_id):
         if not text_content.strip():
             continue
 
+        if btype != "list_item":
+            list_state = None
+        if btype != "table_row":
+            table_state = None
+
         if btype == "heading":
             level, clean_text = _parse_heading_level_and_text(text_content)
             while heading_stack and heading_stack[-1]["level"] >= level:
                 heading_stack.pop()
-
-            block_heading_path = [dict(h) for h in heading_stack]
-
             heading_stack.append({
                 "level": level,
                 "role": "generic",
                 "text": clean_text,
             })
+            block_heading_path = [dict(h) for h in heading_stack]
+
         else:
             block_heading_path = [dict(h) for h in heading_stack]
 
@@ -173,28 +195,58 @@ def to_parsed_blocks(raw_blocks, document_id):
             lang = raw.get("language", "text")
             metadata = {"language": lang if lang else "text"}
         elif btype == "list_item":
-            list_counter += 1
+            if list_state is None:
+                list_counter += 1
+                list_state = {
+                    "list_id": f"list_{list_counter}",
+                    "list_type": "unordered",
+                    "list_level": 0,
+                    "next_item_index": 1,
+                }
+            item_index = list_state["next_item_index"]
+            list_state["next_item_index"] += 1
+            marker = _raw_marker(text_content)
             metadata = {
-                "list_id": f"list_{list_counter}",
-                "item_index": 1,
-                "list_type": "unordered",
-                "list_level": 0,
+                "list_id": list_state["list_id"],
+                "item_index": item_index,
+                "list_type": list_state["list_type"],
+                "list_level": list_state["list_level"],
             }
+            if marker:
+                metadata["marker"] = marker
         elif btype == "table_row":
-            table_counter += 1
+            if table_state is None:
+                table_counter += 1
+                table_state = {
+                    "table_id": f"table_{table_counter}",
+                    "next_row_index": 1,
+                }
+            row_index = table_state["next_row_index"]
+            table_state["next_row_index"] += 1
             cells = _parse_table_cells(text_content)
             metadata = {
-                "table_id": f"table_{table_counter}",
-                "row_index": 1,
-                "cells": cells if cells else [{"column_start": 1, "column_span": 1, "row_span": 1, "text": text_content}],
+                "table_id": table_state["table_id"],
+                "row_index": row_index,
+                "cells": cells if cells else [
+                    {"column_start": 1, "column_span": 1, "row_span": 1, "text": text_content}
+                ],
             }
         elif btype == "quote":
             metadata = {"quote_level": 1}
         else:
             metadata = {}
 
-        block_id_hash = hashlib.sha256(f"{document_id}:{idx}:{text_content}".encode()).hexdigest()[:32]
-        block_id = f"{document_id}_b_{block_id_hash}"
+        canonical_locator = {
+            "type": "txt",
+            "start_line": raw["start_line"],
+            "end_line": raw["end_line"],
+        }
+        canonical_native_content = build_canonical_native_content(
+            btype, text_content, metadata, block_heading_path
+        )
+        block_id = compute_block_id(
+            document_id, "txt", btype, canonical_locator, canonical_native_content
+        )
 
         parsed_blocks.append({
             "schema_version": "1.0",
@@ -220,6 +272,7 @@ def to_parsed_blocks(raw_blocks, document_id):
         pb["source_order"] = i
 
     return parsed_blocks
+
 
 
 def parse_txt(file_path, document_id, output_dir):
