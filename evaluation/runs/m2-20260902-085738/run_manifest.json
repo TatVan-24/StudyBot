@@ -1,0 +1,24 @@
+{
+  "run_id": "m2-20260902-085738",
+  "timestamp_utc": "2026-09-02T08:57:38.855634+00:00",
+  "input_file": "evaluation\\bundle\\blocks.jsonl",
+  "input_sha256": "a8ea97b93817d06dcb642811b155fcf6945083485cda41c39c7175e966867583",
+  "input_parsed_blocks_count": 242,
+  "python_version": "3.12.3 (tags/v3.12.3:f6650f9, Apr  9 2024, 14:05:25) [MSC v.1938 64 bit (AMD64)]",
+  "tokenizer_info": {
+    "type": "Encoding",
+    "tiktoken_available": true
+  },
+  "outputs": {
+    "chunks_fixed": "evaluation\\runs\\m2-20260902-085738/chunks_fixed.jsonl",
+    "chunks_structure": "evaluation\\runs\\m2-20260902-085738/chunks_structure.jsonl",
+    "stats": "evaluation\\runs\\m2-20260902-085738/stats.json",
+    "report": "evaluation\\runs\\m2-20260902-085738/report.md"
+  },
+  "summary": {
+    "fixed_chunks_count": 28,
+    "structure_chunks_count": 39,
+    "jsonschema_available": true,
+    "all_validations_passed": true
+  }
+}
