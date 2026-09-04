@@ -1,0 +1,9 @@
+{
+  "model_name": "sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+  "revision": "4328cf26390c98c5e3c738b4460a05b95f4911f5",
+  "dimension": 768,
+  "max_seq_length": 512,
+  "normalization": "L2",
+  "index_version": "1.0",
+  "created_at": "2026-09-02T08:57:38Z"
+}
