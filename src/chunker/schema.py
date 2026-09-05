@@ -1,5 +1,3 @@
-<<<<<<< Updated upstream
-=======
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -93,4 +91,3 @@ class ChunkValidator:
         if chunk.chunk_id and chunk.chunk_id != chunk.generate_chunk_id():
             errors.append("I1 Violation: chunk_id is not deterministic for its content")
         return errors
->>>>>>> Stashed changes

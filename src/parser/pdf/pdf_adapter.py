@@ -2,6 +2,10 @@ import hashlib
 import json
 from pathlib import Path
 from src.parser.pdf.opendataloader_reader import load_opendataloader_json
+from src.parser.block_id import (
+    compute_block_id,
+    build_canonical_native_content,
+)
 
 
 def _map_semantic_type(type_str):
@@ -25,6 +29,8 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
     heading_stack = []
     list_counter = 0
     table_counter = 0
+    list_state = None
+    table_state = None
 
     for idx, elem in enumerate(elements, start=1):
         raw_text = str(elem.get("text", "")).strip()
@@ -34,18 +40,24 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
         raw_type = elem.get("type", "paragraph")
         btype = _map_semantic_type(raw_type)
 
+        # Logical grouping boundary
+        if btype != "list_item":
+            list_state = None
+        if btype != "table_row":
+            table_state = None
+
         if btype == "heading":
             clean_text = raw_text.lstrip("#").strip()
             level = max(2, elem.get("level", 2))
             while heading_stack and heading_stack[-1]["level"] >= level:
                 heading_stack.pop()
-
-            block_heading_path = [dict(h) for h in heading_stack]
             heading_stack.append({
                 "level": level,
                 "role": "generic",
                 "text": clean_text if clean_text else raw_text,
             })
+            block_heading_path = [dict(h) for h in heading_stack]
+
         else:
             block_heading_path = [dict(h) for h in heading_stack]
 
@@ -54,15 +66,31 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
         elif btype == "code_block":
             metadata = {"language": elem.get("language", "text")}
         elif btype == "list_item":
-            list_counter += 1
+            if list_state is None:
+                list_counter += 1
+                list_state = {
+                    "list_id": f"list_{list_counter}",
+                    "list_type": "unordered",
+                    "list_level": 0,
+                    "next_item_index": 1,
+                }
+            item_index = list_state["next_item_index"]
+            list_state["next_item_index"] += 1
             metadata = {
-                "list_id": f"list_{list_counter}",
-                "item_index": 1,
-                "list_type": "unordered",
-                "list_level": 0,
+                "list_id": list_state["list_id"],
+                "item_index": item_index,
+                "list_type": list_state["list_type"],
+                "list_level": list_state["list_level"],
             }
         elif btype == "table_row":
-            table_counter += 1
+            if table_state is None:
+                table_counter += 1
+                table_state = {
+                    "table_id": f"table_{table_counter}",
+                    "next_row_index": 1,
+                }
+            row_index = table_state["next_row_index"]
+            table_state["next_row_index"] += 1
             cells_raw = elem.get("cells", [])
             cells = []
             for col_idx, cell in enumerate(cells_raw, start=1):
@@ -73,9 +101,11 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
                     "text": str(cell).strip(),
                 })
             metadata = {
-                "table_id": f"table_{table_counter}",
-                "row_index": 1,
-                "cells": cells if cells else [{"column_start": 1, "column_span": 1, "row_span": 1, "text": raw_text}],
+                "table_id": table_state["table_id"],
+                "row_index": row_index,
+                "cells": cells if cells else [
+                    {"column_start": 1, "column_span": 1, "row_span": 1, "text": raw_text}
+                ],
             }
         elif btype == "quote":
             metadata = {"quote_level": 1}
@@ -94,8 +124,18 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
 
         pdf_page = int(elem.get("page_number", 1))
 
-        block_id_hash = hashlib.sha256(f"{document_id}:{idx}:{raw_text}".encode()).hexdigest()[:32]
-        block_id = f"{document_id}_b_{block_id_hash}"
+        # canonical_locator per §6.2: type, pdf_pages, occurrence_index
+        canonical_locator = {
+            "type": "pdf",
+            "pdf_pages": [pdf_page],
+            "occurrence_index": 1,
+        }
+        canonical_native_content = build_canonical_native_content(
+            btype, raw_text, metadata, block_heading_path
+        )
+        block_id = compute_block_id(
+            document_id, "pdf", btype, canonical_locator, canonical_native_content
+        )
 
         parsed_blocks.append({
             "schema_version": "1.0",
@@ -111,13 +151,11 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
             "locator": {
                 "type": "pdf",
                 "occurrence_index": 1,
-                "locations": [
-                    {
-                        "pdf_page": pdf_page,
-                        "printed_page": None,
-                        "bounding_boxes": bounding_boxes,
-                    }
-                ],
+                "locations": [{
+                    "pdf_page": pdf_page,
+                    "printed_page": None,
+                    "bounding_boxes": bounding_boxes,
+                }],
             },
             "metadata": metadata,
         })
@@ -127,6 +165,7 @@ def adapt_opendataloader_json_to_parsed_blocks(json_source, document_id):
         pb["source_order"] = i
 
     return parsed_blocks
+
 
 
 def parse_pdf_bundle(json_source, document_id, output_dir):
