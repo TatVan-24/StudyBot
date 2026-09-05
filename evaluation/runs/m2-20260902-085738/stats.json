@@ -1,0 +1,105 @@
+{
+  "fixed": {
+    "strategy": "fixed",
+    "config": {
+      "window_size": 256,
+      "overlap_ratio": 0.1
+    },
+    "budget_limit": 256,
+    "n_chunks": 28,
+    "is_deterministic": true,
+    "token_stats": {
+      "min": 173,
+      "max": 256,
+      "mean": 253.04,
+      "median": 256.0,
+      "p95": 256.0
+    },
+    "token_histogram": {
+      "0-64": 0,
+      "65-128": 0,
+      "129-256": 28,
+      "257-512": 0,
+      ">512": 0
+    },
+    "char_stats": {
+      "min": 468,
+      "max": 988,
+      "mean": 724.07,
+      "median": 712.5,
+      "p95": 896.0
+    },
+    "over_budget_chunks_count": 0,
+    "block_coverage": {
+      "total_input_blocks": 242,
+      "covered_unique_blocks": 232,
+      "coverage_ratio": 0.9587,
+      "duplicate_block_appearances": 46
+    },
+    "heading_context_coverage": {
+      "chunks_with_heading": 28,
+      "ratio": 1.0
+    },
+    "page_numbers_empty_chunks": 28,
+    "validation_results": {
+      "invariant_errors_count": 0,
+      "schema_errors_count": 0,
+      "chunk_index_contiguous": true,
+      "empty_text_count": 0,
+      "index_mismatch_detail": null,
+      "invariant_errors_sample": [],
+      "schema_errors_sample": []
+    }
+  },
+  "structure": {
+    "strategy": "structure",
+    "config": {
+      "max_tokens": 256
+    },
+    "budget_limit": 256,
+    "n_chunks": 39,
+    "is_deterministic": true,
+    "token_stats": {
+      "min": 8,
+      "max": 264,
+      "mean": 164.1,
+      "median": 200.0,
+      "p95": 255.0
+    },
+    "token_histogram": {
+      "0-64": 8,
+      "65-128": 5,
+      "129-256": 25,
+      "257-512": 1,
+      ">512": 0
+    },
+    "char_stats": {
+      "min": 21,
+      "max": 1013,
+      "mean": 469.77,
+      "median": 534.0,
+      "p95": 902.0
+    },
+    "over_budget_chunks_count": 1,
+    "block_coverage": {
+      "total_input_blocks": 242,
+      "covered_unique_blocks": 242,
+      "coverage_ratio": 1.0,
+      "duplicate_block_appearances": 0
+    },
+    "heading_context_coverage": {
+      "chunks_with_heading": 39,
+      "ratio": 1.0
+    },
+    "page_numbers_empty_chunks": 39,
+    "validation_results": {
+      "invariant_errors_count": 0,
+      "schema_errors_count": 0,
+      "chunk_index_contiguous": true,
+      "empty_text_count": 0,
+      "index_mismatch_detail": null,
+      "invariant_errors_sample": [],
+      "schema_errors_sample": []
+    }
+  }
+}
