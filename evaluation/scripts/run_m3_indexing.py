@@ -11,8 +11,8 @@ from src.indexer.vector_store import SQLiteVectorStore
 from src.indexer.schema import IndexMeta
 
 def run_indexing():
-    input_file = Path("evaluation/runs/m2-20260902-085738/chunks_structure.jsonl")
-    blocks_file = Path("evaluation/bundle/blocks.jsonl")
+    input_file = Path("evaluation/runs/m2-final/chunks_structure.jsonl")
+    blocks_file = Path("evaluation/bundle_all/blocks.jsonl")
     
     db_dir = Path("evaluation/index")
     db_dir.mkdir(parents=True, exist_ok=True)
@@ -109,8 +109,8 @@ def run_indexing():
         
     chunk_ids = set([c["chunk_id"] for c in chunks])
     
-    if len(db_ids) == len(chunk_ids) == 39 and db_ids == chunk_ids:
-        print(f"PASS: index_count == chunk_count == 39, and chunk_ids match exactly.")
+    if len(db_ids) == len(chunk_ids) == 1972 and db_ids == chunk_ids:
+        print(f"PASS: index_count == chunk_count == 1972, and chunk_ids match exactly.")
     else:
         print(f"FAIL: index_count={len(db_ids)}, chunk_count={len(chunk_ids)}. DB ids match: {db_ids == chunk_ids}")
         sys.exit(1)
