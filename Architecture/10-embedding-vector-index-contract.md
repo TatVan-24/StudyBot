@@ -52,21 +52,34 @@ Modules (M3 scope):
 
 ## 4. Pipeline
 
-```text
-load 1972 chunks from canonical JSONL
-  → per-chunk tokenizer.encode() wordpiece count guard (> 512 → ValueError)
-  → batch encode (normalize_embeddings=True) → float32 (1972, 768)
-  → assert np.allclose(norms, 1.0, atol=1e-5)
-  → SQLite atomic transaction: DELETE + INSERT index_meta; upsert 1972 embeddings
-  → write evaluation/index/m3_manifest.json (IndexMeta.model_dump_json)
+```mermaid
+graph TD
+    subgraph "1. Indexing Pipeline (run_m3_indexing.py)"
+        A["M2 Chunks JSONL<br>(1972 chunks)"] --> B{"Fail-Fast Check<br>(Tokens > 512?)"}
+        B -- "Yes" --> C["ValueError<br>(Prevent Truncation)"]
+        B -- "No" --> D["Batch Encode<br>(mpnet-base-v2)"]
+        D --> E["Float32 Matrix<br>(1972 x 768)"]
+        E --> F["L2 Normalization<br>(np.allclose(norms, 1.0))"]
+        F --> G[/"SQLite Transaction<br>(DELETE + INSERT)"/]
+        G --> H[("m3_index.db")]
+        G --> I["m3_manifest.json"]
+    end
 
-query:
-  → encode query text → L2 vector (768,)
-  → assert query_vector.shape[0] == meta.dimension
-  → exact dot product: scores = q @ M.T
-  → argsort(scores)[::-1][:top_k]
-  → join lineage: chunk_id, source_block_ids, heading_context, document_id, text
-  → return List[SearchResult]
+    subgraph "2. Retrieval Pipeline (smoke_retrieval.py)"
+        Q["User Query"] --> R["Encode Query<br>(L2 vector 768d)"]
+        R --> S{"Model Drift Guard<br>(Check Dim & Name)"}
+        S -- "Mismatch" --> T["FATAL Error"]
+        S -- "Match" --> U["Exact Dot Product<br>scores = q @ M.T"]
+        H --> U
+        U --> V["Argsort Descending<br>Select Top-K"]
+        V --> W["Join Lineage<br>(source_block_ids)"]
+        W --> X["Return List[SearchResult]"]
+    end
+    
+    classDef file fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef db fill:#bbf,stroke:#333,stroke-width:2px;
+    class A,I file;
+    class H db;
 ```
 
 ## 5. Input Contract
@@ -90,6 +103,34 @@ M3 must NOT modify `src/chunker/`. Chunk schema v1 is frozen.
 | normalization | Literal "L2" |
 | index_version | Literal "1.0" |
 | created_at | ISO-8601 UTC; audit-only; freeze via M3_EXECUTION_TIME env var |
+
+### SQLite Database Schema (`evaluation/index/m3_index.db`)
+
+The database consists of exactly two tables: `index_meta` and `embeddings`.
+
+**Table 1: `index_meta`** (1 row)
+- `model_name` (TEXT)
+- `revision` (TEXT)
+- `dimension` (INTEGER)
+- `max_seq_length` (INTEGER)
+- `normalization` (TEXT)
+- `index_version` (TEXT)
+- `created_at` (TEXT)
+
+**Table 2: `embeddings`** (1972 rows)
+- `chunk_id` (TEXT PRIMARY KEY)
+- `document_id` (TEXT)
+- `source_block_ids` (TEXT) - JSON array of block IDs
+- `vector` (BLOB) - Float32 binary payload (768 * 4 = 3072 bytes)
+
+**Sample Data (5 Random Rows from `embeddings`):**
+| chunk_id | document_id | source_block_ids | vector size |
+|---|---|---|---|
+| sha256:6825ad6f0d989cae | pdf_aws_001 | `["pdf_aws_001_b_d0c6d8..."]` | 3072 bytes (BLOB) |
+| sha256:294ea37573443f53 | pdf_aws_001 | `["pdf_aws_001_b_37ae73..."]` | 3072 bytes (BLOB) |
+| sha256:2e08f9a6660d2809 | pdf_aws_001 | `["pdf_aws_001_b_f7fcb7..."]` | 3072 bytes (BLOB) |
+| sha256:80f4adbe5d726bdb | pdf_aws_001 | `["pdf_aws_001_b_0d4464..."]` | 3072 bytes (BLOB) |
+| sha256:5fe16105333045aa | pdf_aws_001 | `["pdf_aws_001_b_8d7303..."]` | 3072 bytes (BLOB) |
 
 ### SearchResult (schema.py)
 
