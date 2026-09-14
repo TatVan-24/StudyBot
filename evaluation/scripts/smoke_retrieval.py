@@ -22,13 +22,32 @@ def run_smoke_retrieval():
     meta = store.load_meta()
     if meta:
         print(f"Loaded Index Meta: Model={meta.model_name}, Dimension={meta.dimension}")
+        
+        # --- MODEL DRIFT GUARD (Optimized Option B) ---
+        # 1. Dimension Guard
+        assert engine.dimension == meta.dimension, \
+            f"Mismatched Dimensions! Index has {meta.dimension} but Model outputs {engine.dimension}"
+            
+        # 2. Normalized Name Guard
+        def normalize_model_name(name: str) -> str:
+            return name.strip("/").split("/")[-1].lower()
+            
+        assert normalize_model_name(meta.model_name) == normalize_model_name(engine.model_name), \
+            f"Model Drift Detected! Index was built with '{meta.model_name}' but querying with '{engine.model_name}'"
     else:
         print("Warning: No index metadata found.")
 
     queries = [
+        # Existing (TXT domain - txt_aiops_001)
         "Data Observability Pipeline có những thành phần nào?",
-        "Feature Store dùng để làm gì trong ML?"
+        "Feature Store dùng để làm gì trong ML?",
+        # New (PDF domain - pdf_aws_001)
+        "What are the core services of AWS cloud computing?",
+        # New (MD domain - wiki_06_markdown_sample)
+        "What is the main topic of the markdown sample document?",
     ]
+    
+    seen_documents = set()
     
     for i, q in enumerate(queries):
         print(f"\n--- Query {i+1}: '{q}' ---")
@@ -50,6 +69,12 @@ def run_smoke_retrieval():
             print(f"  [{rank}] Score: {res.score:.4f} | Chunk ID: {res.chunk_id}")
             print(f"       Trace: document={res.document_id}, block_ids={len(res.source_block_ids)}")
             print(f"       Text: {res.text[:100]}...")
+            
+            seen_documents.add(res.document_id)
+            
+    print(f"\nFound results from documents: {seen_documents}")
+    assert len(seen_documents) >= 2, f"FAIL: Expected results from at least 2 distinct documents, but only saw {seen_documents}"
+    print("PASS: Cross-document smoke retrieval successful!")
 
 if __name__ == "__main__":
     run_smoke_retrieval()

@@ -10,7 +10,7 @@ class EmbeddingEngine:
             raise ImportError("Please install sentence-transformers to use EmbeddingEngine")
 
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self.model = SentenceTransformer(model_name, local_files_only=True)
         
         # mpnet-base-v2 defaults to 128 in sentence_bert_config.json for speed, 
         # but the underlying transformer supports 512. We override it to 512 

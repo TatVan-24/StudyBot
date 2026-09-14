@@ -30,19 +30,57 @@ class BaseChunker:
 
     def _default_tokenizer(self):
         if _tiktoken_available:
-            return tiktoken.get_encoding("cl100k_base")
+            try:
+                return tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                pass
         return _FallbackTokenizer()
 
     def chunk(self, blocks: List[dict], document_id: str,
               source_type: str, config: dict) -> ChunkBundle:
         raise NotImplementedError
 
+    def _split_block_text(self, text: str, max_tokens: int) -> List[str]:
+        """Split a single oversized block into sub-strings that each fit within max_tokens.
+        Strategy: split on sentence boundaries (.\n or \n\n) first;
+        if a sentence itself is still too long, split by token window directly."""
+        import re
+        # Try coarse splits first: double newlines, then single newline + period
+        sentences = re.split(r'(?<=\.)\s*\n|\n{2,}', text)
+        parts = []
+        buf = []
+        buf_len = 0
+        for sent in sentences:
+            sent = sent.strip()
+            if not sent:
+                continue
+            sent_len = len(self.tokenizer.encode(sent))
+            if sent_len > max_tokens:
+                # Flush buf first
+                if buf:
+                    parts.append(' '.join(buf))
+                    buf, buf_len = [], 0
+                # Hard split this oversized sentence by token window
+                tokens = self.tokenizer.encode(sent)
+                for i in range(0, len(tokens), max_tokens):
+                    parts.append(self.tokenizer.decode(tokens[i:i + max_tokens]))
+            elif buf_len + sent_len + 1 > max_tokens:
+                parts.append(' '.join(buf))
+                buf, buf_len = [sent], sent_len
+            else:
+                buf.append(sent)
+                buf_len += sent_len + 1
+        if buf:
+            parts.append(' '.join(buf))
+        return parts if parts else [text]
+
     def _build_chunk(self, document_id, source_type, chunk_index, text,
                      token_count, block_ids, pages, headings, types, config) -> Chunk:
+        unique_block_ids = list(dict.fromkeys(block_ids)) if block_ids else []
         chunk = Chunk(
             schema_version="1.0", document_id=document_id, chunk_index=chunk_index,
             text=text, char_count=len(text), token_count=token_count,
-            source_type=source_type, source_block_ids=block_ids,
+            source_type=source_type, source_block_ids=unique_block_ids,
             page_numbers=sorted(pages), heading_context=headings,
             block_types=sorted(types), chunker_strategy=self.strategy,
             chunker_config={k: v for k, v in config.items() if k != "parse_job_id"},
@@ -133,7 +171,36 @@ class StructureAwareChunker(BaseChunker):
             if hp:
                 cur_heads = [h.get("text", "") for h in hp]
 
-            # Vượt max_tokens: flush
+            # Intra-block split: nếu block đơn lẻ đã vượt max_tokens, tách ra ngay
+            block_token_len = len(self.tokenizer.encode(text))
+            if block_token_len > max_tokens:
+                # Flush accumulated buffer trước
+                if cur_text:
+                    joined = "\n\n".join(cur_text)
+                    bundle.add_chunk(self._build_chunk(
+                        document_id, source_type, idx, joined,
+                        len(self.tokenizer.encode(joined)), cur_ids,
+                        cur_pages, cur_heads, cur_types, config))
+                    idx += 1
+                    cur_text, cur_ids, cur_types, cur_pages = [], [], set(), set()
+                # Tách block lớn thành nhiều sub-chunks
+                sub_parts = self._split_block_text(text, max_tokens)
+                loc = b.get("locator", {})
+                b_pages: set = set()
+                if loc.get("type") == "pdf":
+                    for l in loc.get("locations", []):
+                        if l.get("pdf_page"):
+                            b_pages.add(l["pdf_page"])
+                for part in sub_parts:
+                    part_toks = len(self.tokenizer.encode(part))
+                    bundle.add_chunk(self._build_chunk(
+                        document_id, source_type, idx, part,
+                        part_toks, [bid] if bid else [],
+                        b_pages, cur_heads, {btype}, config))
+                    idx += 1
+                continue
+
+            # Vượt max_tokens khi gom thêm block mới: flush trước
             if cur_text and len(self.tokenizer.encode(" ".join(cur_text + [text]))) > max_tokens:
                 joined = "\n\n".join(cur_text)
                 bundle.add_chunk(self._build_chunk(
@@ -141,7 +208,7 @@ class StructureAwareChunker(BaseChunker):
                     len(self.tokenizer.encode(joined)), cur_ids,
                     cur_pages, cur_heads, cur_types, config))
                 idx += 1
-                cur_text, cur_ids, cur_types, cur_pages = [], [], set(), set()  # FIX
+                cur_text, cur_ids, cur_types, cur_pages = [], [], set(), set()
 
             cur_text.append(text)
             if bid:

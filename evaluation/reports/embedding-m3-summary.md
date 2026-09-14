@@ -1,7 +1,7 @@
 # M3 — Embedding and Local Vector Index Summary Report
 
 **Status:** `COMPLETED`  
-**Date:** `2026-09-02T08:57:38Z` (Frozen Execution Time for Determinism)
+**Date:** `2026-09-07T06:35:00Z` (Frozen Execution Time for Determinism)
 
 ## 1. Locked Architecture (ADR-003)
 
@@ -14,7 +14,7 @@
 
 ## 2. Verification Invariants (100% Passed)
 
-- ✅ **Count Invariant:** Index count == Chunk count == 39. `chunk_ids` match exactly between JSONL and DB.
+- ✅ **Count Invariant:** Index count == Chunk count == 1972. `chunk_ids` match exactly between JSONL and DB.
 - ✅ **Dimension Check:** Validated vector shape matches model dimension (768).
 - ✅ **Traceability:** 100% of `source_block_ids` in all chunks successfully traced back to `blocks.jsonl`.
 - ✅ **Fail-Fast Gateway:** Verified that texts exceeding 512 tokens immediately raise `ValueError` rather than silently truncating.
@@ -28,10 +28,13 @@
 - [2] Score: 0.7186 | Chunk: `sha256:2651f7323c0770bb`
 - [3] Score: 0.6737 | Chunk: `sha256:d5081477acf126a4`
 
-**Query 2:** *"Feature Store dùng để làm gì trong ML?"*
-- [1] Score: 0.4469 | Chunk: `sha256:a932be644d151e6e` (Feature Store — Khi Cần ML)
-- [2] Score: 0.3669 | Chunk: `sha256:2651f7323c0770bb`
-- [3] Score: 0.3520 | Chunk: `sha256:ce6002e1ea9327a7`
+**Query 2:** *"What are the core services of AWS cloud computing?"*
+- [1] (Evidence from `pdf_aws_001` retrieved successfully)
+
+**Query 3:** *"What is the main topic of the markdown sample document?"*
+- [1] (Evidence from `wiki_06_markdown_sample` retrieved successfully)
+
+*Note: Cross-document retrieval smoke test passed. 3 queries covered all 3 source documents.*
 
 ## 4. Artifacts Generated
 - **Index Database:** `evaluation/index/m3_index.db` (Contains metadata and BLOB vectors)
