@@ -55,6 +55,7 @@ checkpoints/
 evaluation/corpus/manifest.local.jsonl
 evaluation/runs/*.jsonl
 !evaluation/runs/.gitkeep
+evaluation/results/*.jsonl
 
 # Node/frontend artifacts
 node_modules/

@@ -20,6 +20,8 @@ class EmbeddingEngine:
             
         self.max_seq_length = self.model.max_seq_length
         self.dimension = self.model.get_sentence_embedding_dimension()
+        # encode() always calls normalize_embeddings=True → L2 normalized output
+        self.normalization = "L2"
         
         # Extract huggingface commit hash if available
         self.revision = "main"
