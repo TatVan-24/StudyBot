@@ -1,8 +1,10 @@
 {
   "run_id": "m4-holdout-v1",
-  "dataset": "test-v2.jsonl",
+  "dataset": "test-v3.jsonl",
   "index": "m3_index.db",
-  "fusion_methods": ["dense", "bm25", "rrf60", "minmax_0.2", "minmax_0.3", "minmax_0.4"],
+  "fusion_methods": [
+    "minmax_0.4"
+  ],
   "thresholds": {
     "mrr_full_min": 0.20,
     "mrr_first_min": 0.65,
@@ -11,7 +13,12 @@
     "max_critical_failure_rate": 0.05,
     "max_zero_hit_rate": 0.05
   },
-  "k_values": [1, 3, 5, 10],
+  "k_values": [
+    1,
+    3,
+    5,
+    10
+  ],
   "top_k_retrieval": 10,
   "rrf_k": 60,
   "normalization": "min_max"

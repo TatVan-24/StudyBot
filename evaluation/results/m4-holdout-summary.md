@@ -1,23 +1,26 @@
-# M4-Holdout Summary Report
+# M5 Step 1: Scale Validation Report
 
 ## 1. Aggregate Metrics
 
 | Configuration | MRR First | MRR Full | Cov@10 | Critical Fails | Zero-Hits | Decision |
 |---|---|---|---|---|---|---|
-| **dense** | 0.5451 | 0.3472 | 53.60% | 9 (37.5%) | 7 (29.2%) | Baseline |
-| **bm25** | 0.5702 | 0.3983 | 56.31% | 10 (41.7%) | 6 (25.0%) | Baseline |
-| **rrf60** | 0.5181 | 0.3375 | 60.69% | 10 (41.7%) | 5 (20.8%) | Baseline |
-| **minmax_0.2** | 0.5920 | 0.4062 | 56.31% | 11 (45.8%) | 6 (25.0%) | FAIL |
-| **minmax_0.3** | 0.6066 | 0.4201 | 56.31% | 10 (41.7%) | 6 (25.0%) | FAIL |
-| **minmax_0.4** | 0.6105 | 0.4248 | 60.48% | 10 (41.7%) | 5 (20.8%) | FAIL |
+| **minmax_0.4** | 0.4761 | 0.1848 | 48.12% | 20 (57.1%) | 8 (22.9%) | FAIL |
 
-## 2. Robust Region Conclusion
+## 2. Frozen Baseline Conclusion
 
-**Conclusion:** Fusion Strategy FAIL. No alphas passed guardrails.
+**Conclusion: FAIL.**
+The frozen M4 baseline (`minmax_0.4`) failed the predefined M5 quality gates on test-v3.
 
 
-## 3. Strata Analysis
+## 3. Tag-Level Analysis
 
-| Stratum | Best Alpha | MRR First | MRR Full |
-|---|---|---|---|
-| **direct_factual** | 0.4 | 0.6105 | 0.4248 |
+| Tag | N | MRR First | MRR Full | Critical Fails | Zero-Hits |
+|---|---|---|---|---|---|
+| **pdf** | 20 | 0.5097 | 0.0000 | 11 | 5 |
+| **semantic-heavy** | 21 | 0.3966 | 0.1683 | 13 | 7 |
+| **ambiguous** | 2 | 0.5000 | 0.5000 | 1 | 1 |
+| **lexical-anchor-heavy** | 12 | 0.5279 | 0.1612 | 7 | 1 |
+| **context-dependent** | 2 | 1.0000 | 0.0000 | 0 | 0 |
+| **txt** | 15 | 0.4312 | 0.4312 | 9 | 3 |
+| **cross_lingual** | 1 | 0.2000 | 0.2000 | 1 | 0 |
+| **multi-block** | 1 | 0.0000 | 0.0000 | 1 | 1 |

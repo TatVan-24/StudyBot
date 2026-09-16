@@ -124,10 +124,11 @@ def min_max_norm(scores):
 def preflight_check(cases, chunks, target_blocks_by_case):
     print("\n--- PREFLIGHT VALIDATION ---")
     
-    is_test_v1 = (config["dataset"] in ["test-v1.jsonl", "test-v2.jsonl"])
-    print(f"[{'PASS' if is_test_v1 else 'FAIL'}] Dataset = {config['dataset']}")
+    is_valid_dataset = (config["dataset"] in ["test-v1.jsonl", "test-v2.jsonl", "test-v3.jsonl"])
+    print(f"[{'PASS' if is_valid_dataset else 'FAIL'}] Dataset = {config['dataset']}")
     
-    print(f"[{'PASS' if len(cases) == 24 else 'FAIL'}] 24 cases (found {len(cases)})")
+    has_enough_cases = len(cases) >= 30
+    print(f"[{'PASS' if has_enough_cases else 'FAIL'}] >= 30 cases (found {len(cases)})")
     
     print(f"[PASS] Embedding model = MPNet ({EMBEDDING_MODEL_NAME})")
     print(f"[PASS] Dimension = 768")
@@ -148,14 +149,14 @@ def preflight_check(cases, chunks, target_blocks_by_case):
     if all_targets_exist:
         print("[PASS] All target blocks exist in index")
         
-    alphas = config["fusion_methods"]
-    configs = ["dense", "bm25", "rrf60"] + [a for a in alphas if "minmax" in a]
-    print(f"[{'PASS' if len(configs) == 6 else 'FAIL'}] Configs = exactly 6")
-    
     print(f"[{'PASS' if config['rrf_k'] == 60 else 'FAIL'}] RRF k = {config['rrf_k']}")
     
-    has_alphas = all(a in config["fusion_methods"] for a in ["minmax_0.2", "minmax_0.3", "minmax_0.4"])
-    print(f"[{'PASS' if has_alphas else 'FAIL'}] Alpha = .2/.3/.4")
+    # M5 Step 1: Enforce single frozen baseline
+    has_frozen_baseline = (
+        len(config["fusion_methods"]) == 1
+        and config["fusion_methods"][0] == "minmax_0.4"
+    )
+    print(f"[{'PASS' if has_frozen_baseline else 'FAIL'}] Fusion = minmax_0.4 ONLY")
     
     has_dev = any("development" in c.get("case_id", "") for c in cases)
     print(f"[{'PASS' if not has_dev else 'FAIL'}] No development-v2 cases")
@@ -163,12 +164,10 @@ def preflight_check(cases, chunks, target_blocks_by_case):
     print("----------------------------\n")
     
     all_passed = (
-        is_test_v1 and 
-        len(cases) == 24 and 
+        is_valid_dataset and 
+        has_enough_cases and 
         all_targets_exist and 
-        len(configs) == 6 and 
-        config['rrf_k'] == 60 and 
-        has_alphas and 
+        has_frozen_baseline and 
         not has_dev
     )
     return all_passed, all_source_blocks
@@ -212,7 +211,7 @@ def main():
     bm25_index = BM25Okapi(tokenized_corpus)
     
     alphas = config["fusion_methods"]
-    configs = ["dense", "bm25", "rrf60"] + [a for a in alphas if "minmax" in a]
+    configs = config["fusion_methods"]
     
     raw_results = []
     
@@ -331,11 +330,16 @@ def main():
             
         for tag in tags:
             if tag not in strata_metrics:
-                strata_metrics[tag] = {c: {"mrr_first": [], "mrr_full": []} for c in configs}
+                strata_metrics[tag] = {c: {"mrr_first": [], "mrr_full": [], "critical_fails": 0, "zero_hits": 0, "total": 0} for c in configs}
             strata_metrics[tag][cfg]["mrr_first"].append(m_first)
             strata_metrics[tag][cfg]["mrr_full"].append(m_full)
+            strata_metrics[tag][cfg]["total"] += 1
+            if cov10 == 0.0:
+                strata_metrics[tag][cfg]["zero_hits"] += 1
+            if cov10 == 0.0 or m_first < THRESHOLDS["critical_mrr_first"]:
+                strata_metrics[tag][cfg]["critical_fails"] += 1
         
-    summary = ["# M4-Holdout Summary Report\n"]
+    summary = ["# M5 Step 1: Scale Validation Report\n"]
     summary.append("## 1. Aggregate Metrics\n")
     summary.append("| Configuration | MRR First | MRR Full | Cov@10 | Critical Fails | Zero-Hits | Decision |")
     summary.append("|---|---|---|---|---|---|---|")
@@ -366,30 +370,23 @@ def main():
             
         summary.append(f"| **{cfg}** | {m1:.4f} | {mf:.4f} | {c10:.2%} | {cf} ({cf_rate:.1%}) | {zh} ({zh_rate:.1%}) | {decision} |")
         
-    summary.append("\n## 2. Robust Region Conclusion\n")
-    if len(robust_alphas) == 3:
-        summary.append("**Conclusion:** Fixed Alpha region [0.2 - 0.4] is ROBUST. Proceed with Fixed Alpha Fusion.\n")
-    elif len(robust_alphas) > 0:
-        summary.append("**Conclusion:** Alpha Sensitive. Not all alphas passed. Proceed with Dynamic Gating research.\n")
-    else:
-        summary.append("**Conclusion:** Fusion Strategy FAIL. No alphas passed guardrails.\n")
+    passed_baseline = len(robust_alphas) > 0
+    decision_str = "PASS" if passed_baseline else "FAIL"
+    summary.append("\n## 2. Frozen Baseline Conclusion\n")
+    summary.append(f"**Conclusion: {decision_str}.**\nThe frozen M4 baseline (`{configs[0]}`) {'passed' if passed_baseline else 'failed'} the predefined M5 quality gates on test-v3.\n")
         
     summary.append("\n## 3. Tag-Level Analysis\n")
-    summary.append("| Tag | Best Alpha | MRR First | MRR Full |")
-    summary.append("|---|---|---|---|")
+    summary.append("| Tag | N | MRR First | MRR Full | Critical Fails | Zero-Hits |")
+    summary.append("|---|---|---|---|---|---|")
     
     for stratum, st_data in strata_metrics.items():
-        best_alpha = None
-        best_mf = -1
-        m1_val = 0
-        for cfg in configs:
-            if "minmax" not in cfg: continue
-            mf = np.mean(st_data[cfg]["mrr_full"])
-            if mf > best_mf:
-                best_mf = mf
-                best_alpha = cfg.replace("minmax_", "")
-                m1_val = np.mean(st_data[cfg]["mrr_first"])
-        summary.append(f"| **{stratum}** | {best_alpha} | {m1_val:.4f} | {best_mf:.4f} |")
+        cfg = configs[0]
+        n = st_data[cfg]["total"]
+        m1_val = np.mean(st_data[cfg]["mrr_first"]) if n > 0 else 0
+        mf = np.mean(st_data[cfg]["mrr_full"]) if n > 0 else 0
+        cf = st_data[cfg]["critical_fails"]
+        zh = st_data[cfg]["zero_hits"]
+        summary.append(f"| **{stratum}** | {n} | {m1_val:.4f} | {mf:.4f} | {cf} | {zh} |")
         
     with open(SUMMARY_REPORT_PATH, 'w', encoding='utf-8') as f:
         f.write("\n".join(summary))

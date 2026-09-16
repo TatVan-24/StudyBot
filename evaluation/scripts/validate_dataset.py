@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMAS = ROOT / "schemas"
 PUBLIC_MANIFEST = ROOT / "corpus" / "manifest.public.jsonl"
 LOCAL_MANIFEST = ROOT / "corpus" / "manifest.local.jsonl"
-DATASETS = (ROOT / "datasets" / "development-v1.jsonl", ROOT / "datasets" / "development-v2.jsonl", ROOT / "datasets" / "test-v1.jsonl", ROOT / "datasets" / "test-v2.jsonl")
+DATASETS = (ROOT / "datasets" / "test-v3.jsonl",)
 
 FORBIDDEN_CHUNK_KEYS = {"chunk_id", "chunk_ids", "relevant_chunk_ids", "retrieved_chunks"}
 LOCATOR_REQUIRED = {
