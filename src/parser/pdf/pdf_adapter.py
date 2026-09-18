@@ -1,8 +1,8 @@
 import hashlib
 import json
 from pathlib import Path
-from src.parser.pdf.opendataloader_reader import load_opendataloader_json
-from src.parser.block_id import (
+from .opendataloader_reader import load_opendataloader_json
+from ..block_id import (
     compute_block_id,
     build_canonical_native_content,
 )

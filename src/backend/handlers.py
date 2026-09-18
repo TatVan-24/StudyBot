@@ -79,18 +79,20 @@ def handle_query(
         answer = result["answer"]
         citations = result["citations"]
     else:
-        # Local path: do our own retrieve then prompt
-        chunks = vector_store.search(question, top_k=5, filter={"user_id": user_id})
+        # Local path (M6 Phase 1): just retrieve and return Top-1 chunk as answer
+        chunks = vector_store.search(question, top_k=1)
         if not chunks:
             answer = "No relevant content found in your uploaded documents. Upload some first."
             citations = []
         else:
-            context = "\n\n".join(f"[chunk {i+1}] {c['text']}" for i, c in enumerate(chunks))
-            prompt = PROMPT_TEMPLATE.format(context=context, question=question)
-            answer = ai_client.invoke(prompt, max_tokens=512)
+            top_chunk = chunks[0]
+            answer = f"[M6 Phase 1 Placeholder Answer]\n\n{top_chunk['text']}"
             citations = [
-                {"chunk": i + 1, "doc_id": c["doc_id"], "score": c["score"], "text": c["text"][:200]}
-                for i, c in enumerate(chunks)
+                {
+                    "doc_id": top_chunk["doc_id"], 
+                    "score": top_chunk["score"], 
+                    "metadata": top_chunk.get("metadata", {})
+                }
             ]
 
     userstore.log_query(user_id=user_id, query=question, answer=answer)

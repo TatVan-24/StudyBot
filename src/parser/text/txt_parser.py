@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import re
 import unicodedata
-from src.parser.block_id import (
+from ..block_id import (
     compute_block_id,
     build_canonical_native_content,
 )
