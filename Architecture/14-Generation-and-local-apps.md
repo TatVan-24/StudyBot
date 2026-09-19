@@ -57,8 +57,8 @@ Query → Retrieve → Generate → Answer + Citations
 ## 3. Current State
 
 - **Retrieval Pipeline (M1–M5): FROZEN.** Đã có khả năng đưa ra Top-K Chunks tốt nhất dựa trên Decision Gate.
-- **App Skeleton:** Có source code của một app FastAPI cũ (từ dự án trước), nhưng chưa được đấu nối với RAG pipeline mới.
-- **Generation:** Chưa có code, chưa kết nối LLM, chưa định nghĩa Prompt.
+- **App Skeleton (Phase 1): DONE.** Đã dựng xong pipeline xương sống qua API (Upload TXT → Parse → Chunk → Index → Query → Retrieve).
+- **Generation (Phase 2): DOING.** Đã chốt Output Contract, Prompt Template, chuẩn bị thiết kế Storage Schema (Sessions & Turns) để đấu nối LLM.
 
 ---
 
@@ -74,7 +74,7 @@ Một ứng dụng API cục bộ hoàn chỉnh có thể:
 
 Để giảm thiểu rủi ro, M6 được chia làm 2 giai đoạn:
 
-### Giai đoạn 1: Integration Skeleton (Nền tảng) - Đang thực hiện
+### Giai đoạn 1: Integration Skeleton (Nền tảng) - ✅ HOÀN THÀNH (19/09/2026)
 **Mục tiêu:** Dựng khung end-to-end trước, chưa cần Generation thông minh.
 - **Quy trình:** `Upload TXT → Parse → Chunk → Index → Query → Retrieve → [PLACEHOLDER] → Answer`
 - **Việc cần làm:**
@@ -86,6 +86,7 @@ Một ứng dụng API cục bộ hoàn chỉnh có thể:
 - **Lý do thực hiện trước:** Biết được input/output format, kiểm chứng retrieval trong app có hoạt động không, tạo bộ khung vững chắc để test Generation.
 
 ### Giai đoạn 2: Intelligent Generation & Refusal
+- Áp dụng Input/Output Contract mới (Base Input tối giản và Output 3 trạng thái: acceptance, rejection, ambiguous).
 - Kết nối LLM nội bộ (Ollama / llama.cpp / API).
 - Thiết kế Prompt Template.
 - Triển khai Refusal Logic & Citation Formatting.
@@ -106,59 +107,85 @@ Một ứng dụng API cục bộ hoàn chỉnh có thể:
 Đây là luồng xử lý chi tiết từ lúc nhận Query đến khi trả về Answer:
 
 ```text
-                  USER QUERY
-                      │
-                Input Guardrail
-                      │
-          ┌───────────┴───────────┐
-          │                       │
-     User Query             Internal Query
-          │                       │
-       Embed                   Embed
-          │                       │
-      Retrieval               Retrieval
-          └───────────┬───────────┘
-                      ↓
-               Candidate Context
-                      ↓
-             Context / Input Gate
-                      ↓
-              LLM Generation
-                      ↓
-                Output Guardrail
-                      ↓
-              Answer + Citations
+INPUT GUARDRAIL
+├── T1: Injection (regex — chỉ detect known patterns)
+├── T2: Query validation (rỗng/khoảng trắng)
+└── T3: Session/Document validation
+        ↓
+M5 Retrieval + Decision Gate
+        ↓
+Retrieved Evidence → M6 Evidence Evaluation → answerability_score
+        ↓
+        ├── Threshold → acceptance / ambiguous / rejection
+        ↓
+LLM Generation (nếu acceptance/ambiguous)
+        ↓
+OUTPUT GUARDRAIL
+├── T1: Sensitive data (PII / API key / credential)
+├── T2: Prompt / System leakage
+├── T3: Evidence / Citation / Hallucination (answer + citation + score)
+└── T4: Output Contract (schema + status)
+        ↓
+status: acceptance / ambiguous / rejection
 ```
+
+**Lưu ý:**
+- Điểm `answerability_score` và các ngưỡng HIGH/LOW sẽ được xác định thông qua dataset evaluation. Không dùng cứng threshold 0.5/0.2 từ M5.
 
 ---
 
-## 8. Criteria Output / Output Format
+## 8. API Contracts (Input / Output)
 
-### 8.1 API Response (Answerable)
+### 8.1 Base Input Contract (Query)
+Chỉ yêu cầu 3 field tối giản. Mọi trạng thái khác (document_ids, standalone_query, v.v.) được quản lý ngầm bởi Session/System.
+
 ```json
 {
-  "status": "answered",
-  "query": "...",
-  "answer": "...",
-  "citations": [
-    {
-      "chunk_id": "...",
-      "document_id": "...",
-      "locator": {"type": "txt", "start_line": 42},
-      "excerpt": "..."
-    }
-  ]
+  "session_id": "sess_123",
+  "user_id": "user_123",
+  "query": "Nó có giá bao nhiêu?"
 }
 ```
+**Nguyên tắc mở rộng:** Chỉ thêm (optional) khi có nhu cầu thực tế (ví dụ: `document_ids` khi muốn chọn doc cụ thể, `top_k` khi muốn điều chỉnh số lượng kết quả).
 
-### 8.2 API Response (Unanswerable)
+### 8.2 API Response (Output Contract)
+Phản hồi API có 3 trạng thái (`status`):
+- `acceptance`: Query trả lời được, evidence đủ mạnh.
+- `rejection`: Query không trả lời được (không có evidence).
+- `ambiguous`: Confidence thấp, nguy cơ hallucination.
+
 ```json
 {
-  "status": "refused",
-  "query": "...",
-  "answer": "Tôi không tìm thấy thông tin liên quan trong tài liệu được cung cấp.",
-  "citations": [],
-  "refusal_reason": "zero_hit | low_confidence | llm_refused"
+  "session_id": "sess_123",
+  "user_id": "user_123",
+  "metadata": {
+    "status": "acceptance",
+    "answer": "Giá lưu trữ AWS S3 Glacier là $0.004/GB/tháng.",
+    "strategy": {
+      "retrieval": "dense",
+      "rerank": "bge",
+      "gate": "pass"
+    },
+    "scores": {
+      "retrieval_top1": 0.82,
+      "rerank_top1": 0.65,
+      "answerability_score": 0.65
+    },
+    "citations": [
+      {
+        "chunk_id": "chk_123",
+        "doc_id": "doc_abc",
+        "heading_context": ["AWS S3", "Pricing"]
+      }
+    ],
+    "metrics": {
+      "latency_ms": {
+        "retrieval": 120,
+        "generation": 1080,
+        "total": 1200
+      }
+    }
+  }
 }
 ```
 

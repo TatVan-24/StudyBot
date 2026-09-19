@@ -83,9 +83,11 @@ All claims and terminal updates are conditional. The job stores `worker_id`, `le
 | Job type | Required context/payload | Result |
 |---|---|---|
 | `INGEST_DOCUMENT` | `user_id`, `document_id` | `chunk_count` |
-| `ANSWER_QUERY` | `user_id`, `session_id`, `question` | answer/refusal and citations |
+| `ANSWER_QUERY` | `user_id`, `session_id`, `query` | answer/refusal and citations |
 | `GENERATE_FLASHCARDS` | `user_id`, `session_id`, `count`, `difficulty` | `generated_count` |
 | `DELETE_DOCUMENT` | `user_id`, `document_id` | `deleted_vector_count` |
+
+*Note: For `ANSWER_QUERY`, the input payload adheres to the "Minimal Base Input" principle, consisting of only 3 fields (`user_id`, `session_id`, `query`). Other components such as `document_ids` and `conversation_history` are handled implicitly by the system (Internal State) and will only be explicitly passed if dictated by actual requirements.*
 
 Each contract includes `job_version`. Unsupported versions fail without executing business operations.
 
