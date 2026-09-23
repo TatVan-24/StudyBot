@@ -129,8 +129,87 @@ OUTPUT GUARDRAIL
 status: acceptance / ambiguous / rejection
 ```
 
+**Kiến trúc 3 Chốt chặn (3 Checks Architecture) quanh LLM:**
+
+```text
+     Retrieve
+        ↓
+┌─────────────────────────────────────┐
+│  CHECK 1: Evidence Sufficiency      │  ← TRƯỚC LLM
+│  "Evidence có đủ mạnh không?"       │
+│  Output: answerability_score        │
+└─────────────────────────────────────┘
+        ↓
+        ├── Không → rejection
+        └── Có / chưa chắc
+                  ↓
+             LLM Generate
+                  ↓
+┌─────────────────────────────────────┐
+│  CHECK 2: Citation Validity         │  ← SAU LLM
+│  "Citation có trỏ vào chunk thật?"  │
+│  Deterministic, no ML               │
+└─────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────┐
+│  CHECK 3: Claim Grounding           │  ← SAU LLM
+│  "Claim có được evidence support?"  │
+│  Đây mới là hallucination check     │
+└─────────────────────────────────────┘
+                  ↓
+             Final Output
+```
 **Lưu ý:**
 - Điểm `answerability_score` và các ngưỡng HIGH/LOW sẽ được xác định thông qua dataset evaluation. Không dùng cứng threshold 0.5/0.2 từ M5.
+
+### 7.1. Kết quả Evidence Sufficiency Gate (M6 Check 1)
+
+Dựa trên quá trình đánh giá 35 human-annotated cases (dev set), Gate quyết định Sufficiency (Answerability) đã được đóng băng (frozen) như sau:
+
+**Rule (Frozen):**
+```text
+is_sufficient = (BGE_top1 >= 0.23) AND (BGE_gap >= 0.02)
+```
+
+**Validation (35 cases):**
+- Accuracy : 91.43%
+- Precision: 88.89%
+- Recall   : 94.12%
+- F1       : 91.43%
+- Refusal% : 48.57%
+- TP: 16 | FP: 2 | TN: 16 | FN: 1
+
+**Signals đã khám phá:**
+| Signal | Vai trò | Kết quả |
+|--------|---------|---------|
+| `BGE_top1_score` | Relevance — chunk có liên quan không? | ✅ Giữ (threshold 0.23) |
+| `BGE_score_gap` | Confidence — BGE có phân biệt rõ top1/top2 không? | ✅ Giữ (threshold 0.02) |
+| `QA_score` (ms-marco) | Answerability — chunk có trả lời được query không? | ❌ Reject: không có incremental value nhất quán |
+
+**Failure Cases còn lại (không sửa):**
+| Case | Loại | Failure Mode |
+|------|------|--------------|
+| 015  | FP   | Relevant-but-incomplete: BGE cao nhưng thiếu answer entity (model name) |
+| 033  | FP   | Entity mismatch: Collector vs. SDK unifier |
+| 001  | FN   | Semantic negation: BGE đánh giá thấp quan hệ phủ định |
+
+> **Quyết định:** Chi phí để fix 3 case trên không tương xứng với lợi ích. Không thêm signal/model mới vào Phase 1. Scale stability là hypothesis chưa được kiểm chứng do thiếu annotated data ở quy mô lớn hơn.
+
+### 7.2. Kết quả Claim Grounding (M6 Check 3)
+
+Để phát hiện Ảo giác (Hallucination) từ LLM, hệ thống sử dụng mô hình NLI đa ngôn ngữ. Claim (phát biểu của LLM) và Evidence (chunk) sẽ được đưa qua NLI để phân loại.
+
+**Rule (Frozen for MVP):**
+- Mô hình NLI: `MoritzLaurer/mDeBERTa-v3-base-mnli-xnli` (Hỗ trợ tốt Tiếng Việt - Tiếng Anh).
+- Ngưỡng phân loại:
+  - `HIGH_E = 0.50` (Nếu $P_E \ge 0.50 \rightarrow$ `GROUNDED`)
+  - `HIGH_C = 0.70` (Nếu $P_C \ge 0.70 \rightarrow$ `CONTRADICTION`)
+  - Còn lại $\rightarrow$ `AMBIGUOUS`
+
+**Validation (POC 14 cases):**
+- **Grounded:** TP = 6, FP = 1, FN = 1
+- **Contradiction:** TP = 6, FN = 1
+- **Tổng quan:** Mô hình bắt đúng 12/14 cases (85.7%), đủ tin cậy để triển khai cho MVP Check 3.
 
 ---
 
@@ -148,6 +227,11 @@ Chỉ yêu cầu 3 field tối giản. Mọi trạng thái khác (document_ids, 
 ```
 **Nguyên tắc mở rộng:** Chỉ thêm (optional) khi có nhu cầu thực tế (ví dụ: `document_ids` khi muốn chọn doc cụ thể, `top_k` khi muốn điều chỉnh số lượng kết quả).
 
+**Quy tắc định dạng Citation (Trong Prompt & Post-processing):**
+- **MVP Format (Hiện tại):** Sử dụng Inline `[chunk_id]` trực tiếp trong chuỗi sinh ra (VD: `S3 Glacier giá $0.004/GB [chk_123].`).
+  - *Lý do:* Đảm bảo Check 2 (Citation Validity) đơn giản chỉ là kiểm tra Set Membership, và Check 3 (Claim Grounding) dễ dàng parse được citation ngay cạnh claim.
+  - *Presentation Layer:* Chuỗi đầu ra vẫn giữ nguyên `[chunk_id]`. Việc biến đổi thành `[1]` hoặc tooltip sẽ do Frontend xử lý (ở các Phase sau) để không làm phức tạp hóa Check 2/3 trong M6.
+
 ### 8.2 API Response (Output Contract)
 Phản hồi API có 3 trạng thái (`status`):
 - `acceptance`: Query trả lời được, evidence đủ mạnh.
@@ -160,7 +244,7 @@ Phản hồi API có 3 trạng thái (`status`):
   "user_id": "user_123",
   "metadata": {
     "status": "acceptance",
-    "answer": "Giá lưu trữ AWS S3 Glacier là $0.004/GB/tháng.",
+    "answer": "Giá lưu trữ AWS S3 Glacier là $0.004/GB/tháng [chk_123].",
     "strategy": {
       "retrieval": "dense",
       "rerank": "bge",

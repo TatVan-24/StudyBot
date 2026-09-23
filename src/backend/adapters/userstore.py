@@ -192,14 +192,21 @@ class SQLiteUserStore:
 
     def recent_queries(self, user_id, limit=10):
         cur = self.conn.execute(
-            "SELECT query, answer, created_at FROM user_queries WHERE user_id = ? "
+            "SELECT id, query, answer, created_at FROM user_queries WHERE user_id = ? "
             "ORDER BY created_at DESC LIMIT ?",
             (user_id, limit),
         )
         return [
-            {"query": r[0], "answer": r[1], "created_at": r[2]}
+            {"id": r[0], "query": r[1], "answer": r[2], "created_at": r[3]}
             for r in cur.fetchall()
         ]
+
+    def delete_query(self, user_id, query_id):
+        self.conn.execute(
+            "DELETE FROM user_queries WHERE id = ? AND user_id = ?",
+            (query_id, user_id),
+        )
+        self.conn.commit()
 
 
 class DocumentDBUserStore:

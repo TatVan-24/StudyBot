@@ -114,6 +114,10 @@ def list_docs(x_user_id: str | None = Header(default=None)) -> dict:
 def recent(x_user_id: str | None = Header(default=None), limit: int = 10) -> dict:
     return handlers.handle_recent_queries(_resolve_user_id(x_user_id), userstore, limit=limit)
 
+@app.delete("/queries/{query_id}")
+def delete_query(query_id: int, x_user_id: str | None = Header(default=None)) -> dict:
+    return handlers.handle_delete_query(_resolve_user_id(x_user_id), query_id, userstore)
+
 
 # ---- Static frontend ----
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"

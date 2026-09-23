@@ -85,6 +85,12 @@ def handle_upload(
     }
 
 
+def handle_delete_query(user_id: str, query_id: int, userstore) -> dict:
+    if hasattr(userstore, 'delete_query'):
+        userstore.delete_query(user_id, query_id)
+        return {"status": "deleted", "query_id": query_id}
+    return {"status": "error", "detail": "User store does not support deleting queries yet."}
+
 def handle_query(
     user_id: str,
     question: str,
@@ -95,30 +101,147 @@ def handle_query(
     bedrock_kb_id: str,
 ) -> dict:
     """RAG flow: retrieve user's relevant chunks → call AI with context → log + return."""
+    import time
+    import uuid
+    from backend import validators
+    
+    t0 = time.time()
+    
+    # helper for early return
+    def _make_response(ans: str, status: str, citations: list = None, meta: dict = None):
+        t_total_end = time.time()
+        userstore.log_query(user_id=user_id, query=question, answer=ans)
+        
+        meta = meta or {}
+        if "latency_ms" not in meta:
+            meta["latency_ms"] = {"total": int((t_total_end - t0) * 1000)}
+            
+        return {
+            "query_id": str(uuid.uuid4()),
+            "status": status,
+            "data": {
+                "answer": ans,
+                "citations": citations or [],
+                "metadata": meta
+            }
+        }
+    
     if vector_backend == "bedrock_kb":
         # Production path: let Bedrock do retrieve + generate in one call
         result = ai_client.retrieve_and_generate(query=question, kb_id=bedrock_kb_id)
-        answer = result["answer"]
-        citations = result["citations"]
+        return _make_response(result["answer"], "success", result.get("citations", []))
+        
+    # ---------------------------------------------------------
+    # LOCAL PATH (Phase 2 with Check 1, 2, 3)
+    # ---------------------------------------------------------
+    
+    # B0. Input Guardrail
+    if not validators.input_guardrail(question):
+        return _make_response(
+            ans="Vui lòng đặt câu hỏi cụ thể hơn liên quan đến nội dung tài liệu.",
+            status="rejection",
+            meta={"is_answerable": False, "reason": "Input Guardrail Failed: Greeting or too short"}
+        )
+        
+    # B1. Retrieval
+    t_ret_start = time.time()
+    chunks = vector_store.search(question, top_k=3)
+    t_ret_end = time.time()
+    latency_retrieval = int((t_ret_end - t_ret_start) * 1000)
+    
+    # Ensure chunk_id is extracted correctly from metadata for validators
+    for c in chunks:
+        if "metadata" in c and "chunk_id" in c["metadata"]:
+            c["doc_id"] = c["metadata"]["chunk_id"] # temporary remap to allow validators to use 'doc_id' field as chunk id
+            
+    # B2. Check 1: Evidence Sufficiency
+    if not validators.check_1_sufficiency(chunks):
+        return _make_response(
+            ans="Tôi không tìm thấy đủ thông tin trong tài liệu để trả lời câu hỏi này.",
+            status="rejection",
+            meta={
+                "is_answerable": False,
+                "reason": "Check 1 Failed: Evidence insufficient",
+                "latency_ms": {"retrieval": latency_retrieval}
+            }
+        )
+        
+    # B3. Generation
+    t_gen_start = time.time()
+    res = ai_client.generate_with_citations(question, chunks)
+    t_gen_end = time.time()
+    latency_generation = int((t_gen_end - t_gen_start) * 1000)
+    
+    base_meta = {
+        "is_answerable": True,
+        "latency_ms": {
+            "retrieval": latency_retrieval,
+            "generation": latency_generation
+        }
+    }
+    
+    # B4. Check 2: Citation Validity
+    check2_status = validators.check_2_citations(res.get("citations", []), chunks)
+    if check2_status == "MISSING":
+        base_meta["reason"] = "Check 2 Failed: No citation provided"
+        return _make_response(res["answer"], "rejection", res.get("citations"), base_meta)
+    elif check2_status == "INVALID":
+        base_meta["reason"] = "Check 2 Failed: Hallucinated citation"
+        return _make_response(res["answer"], "ambiguous", res.get("citations"), base_meta)
+        
+    # B5. Check 3: Claim Grounding (Answer-level aggregation)
+    # Split the answer into claims (naively by sentence for now)
+    import re
+    sentences = [s.strip() for s in re.split(r'[.!?\n]', res["answer"]) if s.strip()]
+    
+    # We aggregate Check 3 status over all claims that have a citation
+    check3_results = []
+    for claim in sentences:
+        # Extract cited chunk ids from this specific claim
+        cited_in_claim = re.findall(r"\[(.*?)\]", claim)
+        if not cited_in_claim:
+            continue
+            
+        # Build evidence text for just the chunks cited in this claim
+        # If no specific chunk matched, or to be safe, we can just pass all chunks
+        # that were cited.
+        evidence_texts = []
+        for cid in cited_in_claim:
+            for c in chunks:
+                if c.get("doc_id", "") == cid:
+                    evidence_texts.append(c.get("text", ""))
+                    
+        claim_evidence = " ".join(evidence_texts)
+        if not claim_evidence:
+            continue
+            
+        status = validators.check_3_grounding(claim, chunks=[{"text": claim_evidence}])
+        check3_results.append(status)
+        
+    if not check3_results:
+        # Fallback if no claims could be parsed properly but check 2 passed
+        overall_grounding = "GROUNDED"
+    elif "CONTRADICTION" in check3_results:
+        overall_grounding = "CONTRADICTION"
+    elif "AMBIGUOUS" in check3_results:
+        overall_grounding = "AMBIGUOUS"
     else:
-        # Local path (M6 Phase 1): just retrieve and return Top-1 chunk as answer
-        chunks = vector_store.search(question, top_k=1)
-        if not chunks:
-            answer = "No relevant content found in your uploaded documents. Upload some first."
-            citations = []
-        else:
-            top_chunk = chunks[0]
-            answer = f"[M6 Phase 1 Placeholder Answer]\n\n{top_chunk['text']}"
-            citations = [
-                {
-                    "doc_id": top_chunk["doc_id"], 
-                    "score": top_chunk["score"], 
-                    "metadata": top_chunk.get("metadata", {})
-                }
-            ]
+        overall_grounding = "GROUNDED"
 
-    userstore.log_query(user_id=user_id, query=question, answer=answer)
-    return {"question": question, "answer": answer, "citations": citations}
+    if overall_grounding == "CONTRADICTION":
+        base_meta["reason"] = "Check 3 Failed: Contradiction detected"
+        return _make_response(res["answer"], "rejection", res.get("citations"), base_meta)
+    elif overall_grounding == "AMBIGUOUS":
+        base_meta["reason"] = "Check 3 Failed: Ambiguous grounding"
+        return _make_response(res["answer"], "ambiguous", res.get("citations"), base_meta)
+        
+    # B6. Output Guardrail
+    if not validators.output_guardrail(res):
+        base_meta["reason"] = "Output Guardrail Failed"
+        return _make_response(res["answer"], "ambiguous", res.get("citations"), base_meta)
+        
+    # B7. Status (Success)
+    return _make_response(res["answer"], "acceptance", res.get("citations"), base_meta)
 
 
 def handle_list_docs(user_id: str, userstore) -> dict:
