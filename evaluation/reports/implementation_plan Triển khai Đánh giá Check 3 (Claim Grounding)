@@ -1,0 +1,79 @@
+# Triển khai Đánh giá Check 3 (Claim Grounding)
+
+Tài liệu này vạch ra kế hoạch triển khai bộ khung đánh giá (Evaluation Framework) cho Check 3 trong Phase 2 (Generation) của hệ thống RAG. 
+Mục tiêu chính là xây dựng một tập dữ liệu Claim-level, chạy suy luận qua mô hình NLI (để lấy xác suất $P(E), P(N), P(C)$), và sweep các ngưỡng $HIGH\_E, HIGH\_C$ nhằm tìm ra cấu hình tốt nhất hạn chế tối đa False Positive (Ảo giác / Hallucination).
+
+> [!IMPORTANT]
+> Vui lòng xem xét các Câu hỏi mở (Open Questions) ở phần cuối và phản hồi trước khi chúng ta bắt đầu code.
+
+---
+
+## 1. Mục tiêu (Goals)
+
+- Tạo tập dữ liệu đánh giá cấp độ phát biểu (`claim-level dataset`), ánh xạ một Phát biểu (Claim) + Bằng chứng (Evidence Chunk) $\rightarrow$ Nhãn thực tế (Ground Truth Label).
+- Xây dựng pipeline kiểm tra (Check 3 Pipeline): `Rule-based Hard Check` $\rightarrow$ `NLI Model Inference`.
+- Sweep ngưỡng $HIGH\_E$ (để nhận diện `GROUNDED`) và $HIGH\_C$ (để nhận diện `CONTRADICTION`) trên ma trận 2D nhằm tìm điểm cân bằng tốt nhất.
+- Chọn mô hình NLI phù hợp (ví dụ: `cross-encoder/nli-deberta-v3-small` hoặc `roberta-large-mnli`).
+
+---
+
+## 2. Thiết kế Dataset (`m6_check3_claim_grounding.jsonl`)
+
+Tập dữ liệu sẽ tập trung vào các trường hợp khó (Edge cases) mà các mô hình RAG hay mắc lỗi (sai số liệu, sai chủ thể, suy diễn quá mức).
+
+**Cấu trúc dữ liệu dự kiến:**
+```json
+{
+  "claim_id": "c3_001",
+  "claim": "Giá của S3 Standard là $0.004/GB.",
+  "evidence_text": "Amazon S3 Standard storage costs $0.023 per GB. Amazon S3 Glacier costs $0.004 per GB.",
+  "ground_truth_label": "CONTRADICTION",
+  "has_rule_violation": true, 
+  "rationale": "Claim gán giá của Glacier cho Standard (sai số liệu)."
+}
+```
+
+**Các Nhãn (Labels):**
+- `GROUNDED`: Claim được hỗ trợ hoàn toàn bởi evidence.
+- `CONTRADICTION`: Claim mâu thuẫn trực tiếp với evidence (VD: sai số, sai thực thể).
+- `AMBIGUOUS`: Claim không thể được chứng minh hoặc bác bỏ bởi evidence (VD: thông tin bị thiếu hoặc thêm thắt).
+
+---
+
+## 3. Pipeline Đánh giá (Evaluation Pipeline)
+
+### Bước 1: Chuẩn bị Dataset
+- Khởi tạo file `evaluation/datasets/m6_check3_claim_ground_truth.jsonl` với khoảng 20-30 mẫu thử nghiệm ban đầu (bao phủ các case: đúng, sai số liệu, sai thực thể, suy diễn).
+- *(Cần sự trợ giúp của bạn để gán nhãn hoặc tôi sẽ tạo một bộ dữ liệu giả lập (synthetic) để bạn review).*
+
+### Bước 2: NLI Inference Script (`m6_step8_nli_inference.py`)
+- Viết script Python load mô hình NLI bằng thư viện `transformers` hoặc `sentence-transformers`.
+- Với mỗi cặp `(claim, evidence)` trong dataset, chạy suy luận và xuất ra 3 xác suất $P(E), P(N), P(C)$.
+- Lưu kết quả thô vào `evaluation/results/m6_check3_raw_nli_scores.json`.
+
+### Bước 3: Rule-based Check & Threshold Sweeper (`m6_step9_claim_threshold_sweep.py`)
+- Implement hàm `classify(P_E, P_C, HIGH_E, HIGH_C, has_rule_violation)`.
+- Chạy vòng lặp (Sweep) qua các giá trị $HIGH\_E \in [0.5, 0.9]$ và $HIGH\_C \in [0.5, 0.9]$.
+- Đo lường và in ra các chỉ số:
+  - `TP grounded` (Đúng)
+  - `FP grounded` (Ảo giác - Chỉ số quan trọng nhất cần giảm thiểu)
+  - `FN grounded` (Thận trọng quá mức)
+  - `TP contradiction` (Phát hiện mâu thuẫn đúng)
+
+---
+
+## 4. Kế hoạch xác minh (Verification Plan)
+
+- **Sanity Check:** Chạy mô hình NLI trên 3-5 cặp mẫu thủ công nghiệm thu để đảm bảo output của HuggingFace pipeline trả về đúng định dạng 3 class (Entailment, Neutral, Contradiction).
+- **Sweep Report:** Xuất ra Markdown bảng ma trận 2D thể hiện tỷ lệ `FP grounded` cho từng cặp threshold.
+
+---
+
+## 5. Câu hỏi mở (Open Questions)
+
+> [!WARNING] 
+> Vui lòng phản hồi các câu hỏi sau để chốt phương án:
+
+1. **Nguồn Dataset:** Bạn muốn tôi tự sinh (synthesize) khoảng 30 cases (gồm cả Grounded, Contradiction từ sai số liệu/entity, và Ambiguous) dựa trên corpus AWS để bạn review, hay bạn đã có sẵn một tập dữ liệu nào đó?
+2. **Mô hình NLI:** Chúng ta sẽ chạy thử mô hình nào trước tiên? (Đề xuất: `cross-encoder/nli-deberta-v3-small` hoặc `cross-encoder/nli-deberta-v3-base` để chạy mượt trên CPU/Local). Bạn chốt dùng model nào?
+3. **Rule-based Check:** Trong quá trình đánh giá, tôi có nên code luôn một module nhỏ chuyên bóc tách số liệu (dùng Regex/Spacy) để mô phỏng tính năng hard-check trước khi gọi NLI không, hay chúng ta giả định là đã gán sẵn cờ `has_rule_violation` trong dataset để tập trung test NLI trước?

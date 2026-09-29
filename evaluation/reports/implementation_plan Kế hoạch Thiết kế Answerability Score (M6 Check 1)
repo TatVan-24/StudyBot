@@ -1,0 +1,58 @@
+# Kế hoạch Thiết kế Answerability Score (M6 Check 1)
+
+Mục tiêu: Dựa trên phân tích 6 case FP và bộ dữ liệu 35 case đã được dán nhãn thủ công, chúng ta sẽ thiết kế một công thức tính `answerability_score` mạnh mẽ hơn việc chỉ dùng một ngưỡng tĩnh của BGE. 
+
+## 1. Phân tích Case FN 001 (Bị bỏ sót dù SUFFICIENT)
+
+**Query:** "Will hosting my web app on Amazon automatically make it resilient to failures?"
+**Context:** "...Remember hosting an application on the cloud does **not** make it fault-tolerant or highly available."
+**BGE Score:** `0.1531`
+
+> [!NOTE] 
+> **Hypothesis:** Case 001 cho thấy BGE có thể đánh giá thấp một evidence có relevance cao khi quan hệ query–evidence mang tính phủ định/đối lập. Đây là một điểm đáng lưu ý để quan sát thêm trên tập dữ liệu lớn hơn, chưa vội kết luận thành điểm mù cố hữu.
+
+## Proposed Changes
+
+### 1. `evaluation/scripts/`
+
+#### [NEW] [m6_step4_threshold_sweep.py](file:///d:/Personal%20Project/AWS%20StudyBot/evaluation/scripts/m6_step4_threshold_sweep.py)
+Script này phục vụ mục đích **khám phá (exploratory)** 2D Sweep:
+- Biến thiên `bge_threshold` từ `0.15` đến `0.40`.
+- Biến thiên `gap_threshold` từ `0.00` đến `0.15`.
+- In ra ma trận: `bge_th`, `gap_th`, `TP`, `FP`, `TN`, `FN`, `Precision`, `Recall`, `F1`, `Refusal Rate`.
+- Phân nhóm kết quả thành các vùng Operating Points tiềm năng:
+### 3. Thiết kế Signal #3: Thử nghiệm QA-Cross-Encoder
+Chúng ta lùi lại một bước để giữ đúng mục tiêu của M6: **Chọn signal cho một decision gate, không phải xây một hệ thống hiểu câu hỏi.**
+
+"Answer Target Coverage" chỉ là **Insight (Giả thuyết)** giải thích cho việc BGE thất bại ở Case 015, 033. Để test giả thuyết này, chúng ta cần một **Signal mới (một con số)** để đối chiếu.
+
+**Candidate Signal: QA-Cross-Encoder Score**
+Các model được train trên bộ dataset MS-MARCO (bộ QA cực lớn của Microsoft) thực chất đã học được cơ chế "Answer Target Coverage" ở bên trong các lớp neural. Nếu chunk có nhắc đến chủ đề nhưng vắng bóng thông tin trả lời, model tự động phạt điểm rất nặng.
+
+**Kết quả Test MS-MARCO (Step 3):**
+- **033 (FP):** `qa_score = -3.12` (Bắt được lỗi Entity Mismatch).
+- **015 (FP):** `qa_score = +3.48` (Bị lừa, không bắt được Missing Entity).
+- **001 (FN):** `qa_score = -7.23` (Bị lừa bởi Semantic Negation).
+-> *Kết luận:* QA Cross-Encoder không phải là "viên đạn bạc" (silver bullet) để thay thế BGE, nhưng nó cung cấp thêm một góc nhìn (bắt được 033).
+
+### 4. Kiểm chứng Incremental Value của Signal #3
+Bài toán quyết định giữ hay bỏ QA Score không nằm ở việc nó hoàn hảo hay không, mà nằm ở việc nó mang lại **Giá trị gia tăng (Incremental Value)** như thế nào khi đứng cạnh BGE + Gap.
+
+**Baseline (BGE >= 0.23 AND Gap >= 0.02):**
+- FP = 2 (015, 033)
+- FN = 1 (001)
+
+**Kế hoạch Test Incremental Value:**
+1. Cập nhật script lưu `qa_score` trực tiếp vào field `signals` trong file `m6_dev_sufficiency_ground_truth.jsonl`.
+2. Chạy một bài test 3D (Thêm điều kiện `AND qa_score >= QA_Th` vào Baseline).
+3. Đếm lại số lượng FP và FN trên toàn bộ 35 cases qua nhiều mức `QA_Th` khác nhau:
+   - Nếu `FP: 2 -> 1` và `FN: 1 -> 1`: QA có Incremental Value quá rõ ràng.
+   - Nếu `FP: 2 -> 1` và `FN: 1 -> 2`: Vẫn có lợi, cần cân nhắc đánh đổi (Trade-off).
+   - Nếu `FP: 2 -> 2` và `FN` tăng: QA hoàn toàn vô dụng.
+   - Nếu `FP: 2 -> 0` và `FN` tăng vọt: Signal có sức lọc nhưng quá khắt khe.
+   
+-> *Kết luận:* Đánh giá Incremental Value dựa trên **trade-off FP giảm được so với FN phát sinh**, không phải đúng/sai tuyệt đối.
+> [!IMPORTANT]
+> Logic đo lường Incremental Value của bạn quá chuẩn xác về mặt System Engineering (không hỏi "Signal này có tốt không", mà hỏi "Signal này kết hợp vào có làm hệ thống tốt hơn không").
+>
+> Tôi sẽ cập nhật script lưu `qa_score` vào JSONL và chạy thử phép toán cộng gộp này ngay bây giờ nếu bạn đồng ý!
