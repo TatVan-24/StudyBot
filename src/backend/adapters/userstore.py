@@ -155,16 +155,46 @@ class SQLiteUserStore:
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, doc_id)
             );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                title TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_active_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_user
+                ON sessions(user_id, last_active_at DESC);
+
+            CREATE TABLE IF NOT EXISTS session_documents (
+                session_id TEXT NOT NULL,
+                doc_id TEXT NOT NULL,
+                added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (session_id, doc_id),
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_docs_session
+                ON session_documents(session_id);
+
             CREATE TABLE IF NOT EXISTS user_queries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                turn_index INTEGER,
                 user_id TEXT NOT NULL,
                 query TEXT,
                 answer TEXT,
+                status TEXT,
+                reason TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
-            CREATE INDEX IF NOT EXISTS user_queries_user_idx ON user_queries(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_queries_session
+                ON user_queries(session_id, turn_index);
+            CREATE INDEX IF NOT EXISTS idx_queries_user
+                ON user_queries(user_id, created_at DESC);
         """)
         self.conn.commit()
+
+    # ── Document methods ──────────────────────────────────────────────────────
 
     def add_doc(self, user_id, doc_id, metadata):
         self.conn.execute(
@@ -183,21 +213,181 @@ class SQLiteUserStore:
             for r in cur.fetchall()
         ]
 
-    def log_query(self, user_id, query, answer):
+    # ── Session methods ───────────────────────────────────────────────────────
+
+    def create_session(self, user_id: str, title: str = None) -> str:
+        """Tạo session mới. Return session_id."""
+        import uuid as _uuid
+        session_id = str(_uuid.uuid4())
         self.conn.execute(
-            "INSERT INTO user_queries (user_id, query, answer) VALUES (?, ?, ?)",
-            (user_id, query, answer[:1000]),
+            "INSERT INTO sessions (session_id, user_id, title) VALUES (?, ?, ?)",
+            (session_id, user_id, title or "New session"),
         )
         self.conn.commit()
+        return session_id
 
-    def recent_queries(self, user_id, limit=10):
+    def get_session(self, session_id: str, user_id: str = None) -> dict | None:
+        """Lấy session theo id. Nếu có user_id, verify ownership."""
+        if user_id:
+            cur = self.conn.execute(
+                "SELECT session_id, user_id, title, created_at, last_active_at "
+                "FROM sessions WHERE session_id = ? AND user_id = ?",
+                (session_id, user_id),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT session_id, user_id, title, created_at, last_active_at "
+                "FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row[0],
+            "user_id": row[1],
+            "title": row[2],
+            "created_at": row[3],
+            "last_active_at": row[4],
+        }
+
+    def list_sessions(self, user_id: str, limit: int = 50) -> list:
+        """List sessions của user, mới nhất trước."""
         cur = self.conn.execute(
-            "SELECT id, query, answer, created_at FROM user_queries WHERE user_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
+            "SELECT session_id, title, created_at, last_active_at "
+            "FROM sessions WHERE user_id = ? "
+            "ORDER BY last_active_at DESC LIMIT ?",
             (user_id, limit),
         )
         return [
-            {"id": r[0], "query": r[1], "answer": r[2], "created_at": r[3]}
+            {
+                "session_id": r[0],
+                "title": r[1],
+                "created_at": r[2],
+                "last_active_at": r[3],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def delete_session(self, session_id: str, user_id: str) -> bool:
+        """Xóa session + cascade session_documents. Return True nếu xóa được."""
+        cur = self.conn.execute(
+            "DELETE FROM sessions WHERE session_id = ? AND user_id = ?",
+            (session_id, user_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def add_doc_to_session(self, session_id: str, doc_id: str) -> bool:
+        """Thêm doc vào session. Return False nếu vượt max 10."""
+        if self.count_session_docs(session_id) >= 10:
+            return False
+        self.conn.execute(
+            "INSERT OR IGNORE INTO session_documents (session_id, doc_id) VALUES (?, ?)",
+            (session_id, doc_id),
+        )
+        self.conn.commit()
+        return True
+
+    def get_session_docs(self, session_id: str) -> list:
+        """List doc_ids trong session."""
+        cur = self.conn.execute(
+            "SELECT doc_id FROM session_documents WHERE session_id = ?",
+            (session_id,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+    def count_session_docs(self, session_id: str) -> int:
+        cur = self.conn.execute(
+            "SELECT COUNT(*) FROM session_documents WHERE session_id = ?",
+            (session_id,),
+        )
+        return cur.fetchone()[0]
+
+    def update_session_activity(self, session_id: str) -> None:
+        """Update last_active_at = now."""
+        self.conn.execute(
+            "UPDATE sessions SET last_active_at = CURRENT_TIMESTAMP WHERE session_id = ?",
+            (session_id,),
+        )
+        self.conn.commit()
+
+    def next_turn_index(self, session_id: str) -> int:
+        """Tính turn_index tiếp theo cho session."""
+        cur = self.conn.execute(
+            "SELECT COALESCE(MAX(turn_index), 0) + 1 FROM user_queries WHERE session_id = ?",
+            (session_id,),
+        )
+        return cur.fetchone()[0]
+
+    def list_session_turns(self, session_id: str) -> list:
+        """Load toàn bộ turns của session theo thứ tự."""
+        cur = self.conn.execute(
+            "SELECT id, turn_index, query, answer, status, reason, created_at "
+            "FROM user_queries WHERE session_id = ? ORDER BY turn_index ASC",
+            (session_id,),
+        )
+        return [
+            {
+                "id": r[0],
+                "turn_index": r[1],
+                "query": r[2],
+                "answer": r[3],
+                "status": r[4],
+                "reason": r[5],
+                "created_at": r[6],
+            }
+            for r in cur.fetchall()
+        ]
+
+    # ── Query logging ─────────────────────────────────────────────────────────
+
+    def log_query(
+        self,
+        user_id: str,
+        query: str,
+        answer: str,
+        session_id: str = None,
+        turn_index: int = None,
+        status: str = None,
+        reason: str = None,
+    ) -> int:
+        """Lưu query. Return id của row mới. Backward compatible — session fields optional."""
+        cur = self.conn.execute(
+            "INSERT INTO user_queries "
+            "(session_id, turn_index, user_id, query, answer, status, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_id, turn_index, user_id, query, answer[:1000], status, reason),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def recent_queries(self, user_id: str, limit: int = 10, session_id: str = None) -> list:
+        """List queries. Nếu có session_id → chỉ queries của session đó."""
+        if session_id:
+            cur = self.conn.execute(
+                "SELECT id, query, answer, created_at, session_id, turn_index, status "
+                "FROM user_queries WHERE user_id = ? AND session_id = ? "
+                "ORDER BY turn_index ASC LIMIT ?",
+                (user_id, session_id, limit),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT id, query, answer, created_at, session_id, turn_index, status "
+                "FROM user_queries WHERE user_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            )
+        return [
+            {
+                "id": r[0],
+                "query": r[1],
+                "answer": r[2],
+                "created_at": r[3],
+                "session_id": r[4],
+                "turn_index": r[5],
+                "status": r[6],
+            }
             for r in cur.fetchall()
         ]
 

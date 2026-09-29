@@ -1,6 +1,6 @@
 """Factory: read env config + instantiate concrete adapters."""
-from backend.config import config
-from backend.adapters import ai, storage, userstore, vector
+from src.backend.config import config
+from src.backend.adapters import ai, storage, userstore, vector
 
 
 def make_ai():

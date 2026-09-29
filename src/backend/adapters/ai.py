@@ -75,7 +75,7 @@ class LocalAI:
 
 class OpenAIAdapter:
     """Uses OpenAI SDK for API endpoints (like Claude via mwapi)."""
-    
+
     def __init__(self, api_key: str, base_url: str, model: str):
         from openai import OpenAI
         self.client = OpenAI(api_key=api_key, base_url=base_url)
@@ -83,14 +83,14 @@ class OpenAIAdapter:
 
     def generate_with_citations(self, query: str, chunks: list) -> dict:
         import re
-        
+
         # Build prompt with [chunk_id] inline
         evidence_text = ""
         for c in chunks:
             chunk_id = c.get("doc_id", "unknown")
             text = c.get("text", "")
             evidence_text += f"Tài liệu [{chunk_id}]:\n{text}\n\n"
-            
+
         prompt = f"""Bạn là trợ lý AI chuyên về kỹ thuật phần mềm và kiến trúc đám mây. Nhiệm vụ của bạn là trả lời câu hỏi dựa trên các TÀI LIỆU được cung cấp.
 
 TÀI LIỆU (EVIDENCE):
@@ -99,7 +99,7 @@ TÀI LIỆU (EVIDENCE):
 QUY TẮC NGHIÊM NGẶT:
 1. CHỈ sử dụng thông tin từ TÀI LIỆU được cung cấp. Không sử dụng kiến thức bên ngoài, không tự bịa thông tin.
 2. Nếu TÀI LIỆU không chứa đủ thông tin để trả lời, hãy nói rõ: "Tôi không tìm thấy đủ thông tin trong tài liệu."
-3. Mọi câu khẳng định (claim) PHẢI kèm theo trích dẫn dạng [chunk_id] tương ứng với nguồn tài liệu. 
+3. Mọi câu khẳng định (claim) PHẢI kèm theo trích dẫn dạng [chunk_id] tương ứng với nguồn tài liệu.
 4. Đặt trích dẫn ngay sau câu hoặc ý được trích xuất từ tài liệu (VD: S3 Glacier có giá $0.004 [sha256:123abc...].).
 5. Chỉ trích dẫn các tài liệu thực sự hỗ trợ cho câu khẳng định đó.
 6. Trả lời bằng tiếng Việt, ngắn gọn, súc tích và dễ hiểu.
@@ -122,14 +122,14 @@ CÂU HỎI:
         except Exception as e:
             print(f"Error calling LLM: {e}")
             answer = f"Lỗi khi gọi mô hình: {e}"
-            
+
         # Parse citations from answer using regex: looking for [chunk_id]
         # We find all [something] and see if it's in our chunks
         cited_ids = []
         matches = re.findall(r"\[(.*?)\]", answer)
         for match in matches:
             cited_ids.append(match)
-            
+
         # Build citation list (matching the expected format)
         citations = []
         unique_cited = set(cited_ids)
