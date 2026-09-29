@@ -18,13 +18,13 @@ def load_opendataloader_json(json_source):
 
     kids = data.get("kids", [])
     elements = []
-    
+
     def process_kid(kid):
         ktype = kid.get("type", "").lower()
         page = kid.get("page number", 1)
         bbox = kid.get("bounding_box", [])
         order = kid.get("reading_order", 0)
-        
+
         if ktype == "list":
             for li in kid.get("list items", []):
                 elements.append({
@@ -35,7 +35,7 @@ def load_opendataloader_json(json_source):
                     "reading_order": li.get("reading_order", order)
                 })
             return
-            
+
         if ktype == "table":
             for row in kid.get("rows", []):
                 cells = row.get("cells", [])

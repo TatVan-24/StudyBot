@@ -11,18 +11,18 @@ class EmbeddingEngine:
 
         self.model_name = model_name
         self.model = SentenceTransformer(model_name, local_files_only=True)
-        
-        # mpnet-base-v2 defaults to 128 in sentence_bert_config.json for speed, 
-        # but the underlying transformer supports 512. We override it to 512 
+
+        # mpnet-base-v2 defaults to 128 in sentence_bert_config.json for speed,
+        # but the underlying transformer supports 512. We override it to 512
         # to avoid silent truncation of our M2 chunks (which can reach ~264 tokens).
         if "mpnet-base-v2" in model_name:
             self.model.max_seq_length = 512
-            
+
         self.max_seq_length = self.model.max_seq_length
         self.dimension = self.model.get_sentence_embedding_dimension()
         # encode() always calls normalize_embeddings=True → L2 normalized output
         self.normalization = "L2"
-        
+
         # Extract huggingface commit hash if available
         self.revision = "main"
         try:
@@ -32,7 +32,7 @@ class EmbeddingEngine:
                     break
         except Exception:
             pass
-        
+
     def encode(self, texts: List[str]) -> np.ndarray:
         """
         Encode a list of texts into dense vectors.
@@ -44,7 +44,7 @@ class EmbeddingEngine:
             tokens = self.model.tokenizer.encode(text)
             if len(tokens) > self.max_seq_length:
                 raise ValueError(f"Chunk exceeds max_seq_length ({len(tokens)} > {self.max_seq_length}). Truncation is disabled.")
-                
+
         # encode with normalize_embeddings=True applies L2 norm automatically
         embeddings = self.model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
         return embeddings

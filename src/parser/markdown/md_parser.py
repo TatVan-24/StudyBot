@@ -31,28 +31,28 @@ def read_lines(path):
 
 def detect_line(text):
     stripped = text.strip()
-    
+
     if not stripped:
         return "BLANK"
-        
+
     if stripped.startswith("```"):
         return "CODE_FENCE"
-        
+
     if re.match(r'^(#{1,6})\s+', text.lstrip()):
         return "HEADING"
-        
+
     if re.match(r'^\|[\-\s\|:]+\|$', stripped):
         return "TABLE_SEPARATOR"
-        
+
     if stripped.startswith("|") and stripped.endswith("|"):
         return "TABLE_ROW"
-        
+
     if text.lstrip().startswith(">"):
         return "QUOTE"
-        
+
     if re.match(r'^([\-\*\+]\s+|\d+\.\s+)', text.lstrip()):
         return "LIST_ITEM"
-        
+
     return "TEXT"
 
 def build_blocks(lines):
@@ -90,7 +90,7 @@ def build_blocks(lines):
                 "language": fence_str if fence_str else "text",
             }
             continue
-            
+
         if kind == "TABLE_SEPARATOR":
             # Just ignore it, we don't need to parse it as a block
             continue
@@ -122,7 +122,7 @@ def build_blocks(lines):
             "start_line": line["line_number"],
             "end_line": line["line_number"],
         }
-        
+
         # HEADING and TABLE_ROW don't typically span multiple lines without blank lines in markdown
         if kind in ("HEADING", "TABLE_ROW"):
             flush_block()
