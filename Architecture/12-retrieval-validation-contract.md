@@ -43,7 +43,7 @@ Fresh unseen test-v1
 
 **Secondary**
 - Regession Test BM25/Dense/RRF
-- Test trade-off between 
+- Test trade-off between
     - First hit retrieval
     - Full evidence retrieval
 - Recognize failure pattern on unseen cases

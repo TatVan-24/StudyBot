@@ -4,22 +4,22 @@
 Accepted
 
 ## Context
-Trong pha đánh giá (Evaluation) hệ thống RAG (Retriever-Augmented Generation), việc đo lường độ chính xác của Retrieval phụ thuộc rất lớn vào cách định nghĩa "sự trùng khớp" (relevance) giữa Ground Truth và Retrieved Chunks. 
+Trong pha đánh giá (Evaluation) hệ thống RAG (Retriever-Augmented Generation), việc đo lường độ chính xác của Retrieval phụ thuộc rất lớn vào cách định nghĩa "sự trùng khớp" (relevance) giữa Ground Truth và Retrieved Chunks.
 Đặc thù của StudyBot phục vụ nhiều use case (Q&A, Summarization, Flashcard), do đó một đoạn văn bản (Ground Truth) có thể rải rác trên nhiều block, và một Chunk bị giới hạn bởi số lượng token có thể không bao giờ chứa đủ toàn bộ Ground Truth.
 Ngoài ra, các metric như Recall@K truyền thống (đếm số lượng chunks) thường bị đánh lừa bởi sự trùng lặp thông tin (Redundancy) - khi Retriever trả về nhiều chunks có chung một nội dung.
 
 ## Decision
 Một Evaluation Contract toàn diện được thống nhất, bao gồm 5 quyết định cốt lõi:
 
-1. **D1 - Lineage Binding (Late Binding & Runtime Querying)**: 
+1. **D1 - Lineage Binding (Late Binding & Runtime Querying)**:
    Không sinh ra các file hoặc database mapping trung gian. Sự liên kết từ `Locator` (Ground Truth) đến `Chunk` được thực hiện ở thời điểm đánh giá thông qua việc kiểm tra trực tiếp metadata `source_block_ids` của Chunk trong SQLite Index.
-2. **D2 - Relevance (Block Overlap)**: 
+2. **D2 - Relevance (Block Overlap)**:
    Sự liên quan của một chunk không phải là nhị phân (Yes/No), mà là một tập hợp (Subset). Một chunk cung cấp một phần bằng chứng dựa trên phép giao: `chunk.source_block_ids ∩ target_block_ids`.
-3. **D3 - Primary Metric (Cumulative Block Coverage@K)**: 
+3. **D3 - Primary Metric (Cumulative Block Coverage@K)**:
    Thay vì đếm số chunks, M4 đo lường tỷ lệ phần trăm các block của Ground Truth đã được bao phủ bởi tất cả các chunks từ Top 1 đến Top K. Metric này kháng hoàn toàn nhiễu do thông tin trùng lặp.
-4. **D4 - Ranking Metric (Dual MRR)**: 
+4. **D4 - Ranking Metric (Dual MRR)**:
    Sử dụng đồng thời 2 chỉ số: `MRR_First_Hit` (Đo tốc độ tìm thấy mảnh bằng chứng đầu tiên) và `MRR_Full_Coverage` (Đo tốc độ bao phủ 100% bằng chứng). Khoảng cách giữa 2 chỉ số là cảnh báo về Redundancy và tín hiệu để áp dụng Maximal Marginal Relevance (MMR).
-5. **D5 - Retrieval Scope (Global Search)**: 
+5. **D5 - Retrieval Scope (Global Search)**:
    Quá trình đánh giá không áp dụng bộ lọc (filter) theo từng tài liệu. Mọi Query đều phải tìm kiếm trên toàn bộ Vector Index để đo lường năng lực chống nhiễu (distractors) thực tế của Embedding Model.
 
 ## Consequences
