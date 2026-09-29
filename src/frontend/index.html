@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
   <title>StudyBot — Learn from your own notes</title>
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <link rel="stylesheet" href="/static/styles.css?v=7">
 </head>
 
 <body>
@@ -65,6 +65,10 @@
           onclick="document.querySelector('.library-panel').scrollIntoView({behavior:'smooth'})"><span>▤</span>My
           library</button><button class="nav-item"
           onclick="toast('Learning progress is planned for the next iteration.', 'info')"><span>◫</span>Progress</button>
+
+        <button class="new-chat-btn" onclick="newChat()" type="button">
+            <span>+</span> New Chat
+        </button>
       </nav>
       <div class="sidebar-card"><strong>Study smarter</strong>
         <p>Upload a note and ask questions grounded in its content.</p><span id="backend-state"
@@ -94,13 +98,13 @@
           </div>
           <div class="hero-stats">
             <div><strong id="document-count">0</strong><span>Documents</span></div>
-            <div><strong id="query-count">0</strong><span>Conversations</span></div>
+            <div><strong id="query-count">0</strong><span>Sessions</span></div>
           </div>
         </section>
 
         <div id="chat-stream" class="chat-stream">
           <!-- Chat messages will be appended here -->
-          <div class="chat-message system-message">
+          <div id="welcome-message" class="chat-message system-message">
             <div class="welcome-card">
               <h2>👋 Add your first document</h2>
               <p>Click <strong>📎 Attach</strong> below to upload a PDF, TXT, or Markdown file, then ask questions about
@@ -143,7 +147,7 @@
                 learning.</span></div>
           </div>
         </section>
-        <details class="debug-panel">
+        <details id="debug-panel" class="debug-panel" style="display: none;">
           <summary>Developer diagnostics</summary>
           <pre id="debug-log">No requests yet.</pre>
         </details>
@@ -151,7 +155,7 @@
     </div>
   </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=7"></script>
 </body>
 
 </html>
