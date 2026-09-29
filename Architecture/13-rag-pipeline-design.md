@@ -1,12 +1,12 @@
-# RAG Pipeline Design & Workflow (M1 - M5)
+# RAG Pipeline Design & Workflow (M1 - M6)
 
-Tài liệu này mô tả chi tiết luồng xử lý dữ liệu (Data Pipeline) và kiến trúc của hệ thống RAG (Retrieval-Augmented Generation) tại tầng Local Worker, tính đến hết Milestone 5. Hệ thống đã hoàn thiện Data Ingestion, Information Retrieval và Decision Gate. Generation (LLM) sẽ được bổ sung trong M6.
+Tài liệu này mô tả chi tiết luồng xử lý dữ liệu (Data Pipeline) và kiến trúc của hệ thống RAG (Retrieval-Augmented Generation) tại tầng Local Worker, tính đến hết Milestone 6. Hệ thống đã hoàn thiện Data Ingestion, Information Retrieval, Decision Gate, LLM Generation và hệ thống Input/Output Guardrails.
 
 ---
 
-## 1. Overall RAG Pipeline Architecture (Current — M5)
+## 1. Overall RAG Pipeline Architecture (Current — M6)
 
-Bức tranh toàn cảnh từ tài liệu thô đến khi user nhận được kết quả. **Retrieval pipeline giờ có thêm Decision Gate (M5).**
+Bức tranh toàn cảnh từ tài liệu thô đến khi user nhận được kết quả. Pipeline giờ đã tích hợp LLM Generation cùng bộ 3 Checks và Guardrails (M6).
 
 ```mermaid
 flowchart TD
@@ -14,10 +14,11 @@ flowchart TD
     classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:2px
     classDef query fill:#fff3e0,stroke:#e65100,stroke-width:2px
     classDef gate fill:#ede7f6,stroke:#6a1b9a,stroke-width:2px
+    classDef guardrail fill:#fce4ec,stroke:#c2185b,stroke-width:2px
 
     subgraph INGESTION [Data Ingestion Pipeline — M1/M2/M3]
         direction TB
-        Raw[Raw Documents: TXT, MD, PDF] -->|M1: Parser| Blocks[Parsed Blocks with Metadata]
+        Raw[Raw Documents] -->|M1: Parser| Blocks[Parsed Blocks]
         Blocks -->|M2: Chunker| Chunks[Text Chunks ≤ 512 tokens]
         Chunks -->|M3: Embedder| Vectors[768d Dense Vectors]
     end
@@ -27,34 +28,54 @@ flowchart TD
         BM25_Index[(BM25 Sparse Index)]
     end
 
+    subgraph GUARD_IN [Input Guardrail — M6]
+        direction TB
+        UserQ([User Query]) --> T1_Inj[T1: Injection Detection\nRegex Patterns]
+        T1_Inj --> T2_Val[T2: Query Validation]
+        T2_Val --> T3_Sess[T3: Session/Doc Validation]
+    end
+
     subgraph RETRIEVAL [Query & Retrieval Pipeline — M4]
         direction TB
-        UserQ([User Query]) --> PreProcess[Query Pre-processing]
-        PreProcess --> Q_Embed[MPNet Embedding]
+        PreProcess[Query Pre-processing] --> Q_Embed[MPNet Embedding]
         PreProcess --> Q_Token[Tokenization]
 
         Q_Embed -->|Dense Search Top-20| KNN[Exact KNN L2 Distance]
         Q_Token -->|Sparse Search Top-20| BM25[BM25 Scoring]
 
-        KNN --> Pool[(Candidate Pool\nDense ∪ BM25 Top-20)]
+        KNN --> Pool[(Candidate Pool)]
         BM25 --> Pool
 
-        Pool --> ScoreFusion[Min-Max Score Fusion\nα=0.4 Dense + 0.6 BM25]
+        Pool --> ScoreFusion[Min-Max Score Fusion]
         ScoreFusion --> BaselineRank[Baseline Ranking]
     end
 
-    subgraph M5_GATE [Decision Gate — M5 CLOSED]
+    subgraph M5_GATE [Decision Gate — M5]
         direction TB
         BaselineRank --> BGEScore[BGE Reranker\nBAI/bge-reranker-v2-m3]
-        BGEScore --> BGETop1[BGE Top-1\n+ Raw Logit Score]
+        BGEScore --> GateDecision{Decision Gate}
+        GateDecision --> FinalEvidence[Final Evidence]
+    end
 
-        BGETop1 --> GateDecision{Decision Gate\nFrozen Rule}
+    subgraph GENERATION [Generation & Verification — M6]
+        direction TB
+        FinalEvidence --> Check1[Check 1: Evidence Sufficiency]
+        Check1 -->|Pass| LLM[LLM Generation]
+        Check1 -->|Fail| Reject1[Reject: Insufficient]
 
-        GateDecision -->|score >= 0.20\nOR baseline_rank <= 1| UseBGE[Select BGE Top-1]
-        GateDecision -->|score < 0.20\nAND baseline_rank > 1| UseBaseline[Select Baseline Top-1]
+        LLM --> Check2[Check 2: Citation Validity]
+        Check2 -->|MISSING| RefusalGate[Truthful Refusal Gate\nrefusal.py classify\u28024-way\u2803]
+        Check2 -->|INVALID| Amb[Ambiguous: Hallucinated citation]
+        Check2 -->|VALID| Check3[Check 3: Claim Grounding\nmDeBERTa NLI]
 
-        UseBGE --> FinalResult[Final Result]
-        UseBaseline --> FinalResult
+        RefusalGate -->|truthful_refusal| StatusRefusal([status: refusal])
+        RefusalGate -->|false_refusal| Reject2[Reject: False Refusal]
+        RefusalGate -->|format_error| Reject3[Reject: No citation]
+
+        Check3 -->|Grounded/Ambiguous| GuardOut[Output Guardrail\nPII, Sec, Leak]
+        Check3 -->|Contradiction| Reject4[Reject: Hallucination]
+
+        GuardOut --> FinalResult([Final API Contract\nstatus: acceptance / ambiguous / rejection / refusal])
     end
 
     Vectors --> DB
@@ -63,12 +84,15 @@ flowchart TD
     DB --> KNN
     BM25_Index --> BM25
 
-    FinalResult -.->|M6: Generation| LLM([Local LLM Generation\nAnswer / Refuse + Citation])
+    T3_Sess -->|Valid| PreProcess
+    T3_Sess -->|Invalid| Reject0[Reject: Invalid Input]
+    FinalEvidence --> Check1
 
     class Raw,Blocks,Chunks,Vectors,UserQ,FinalResult,LLM query
-    class INGESTION,RETRIEVAL process
+    class INGESTION,RETRIEVAL,GENERATION process
     class DB,BM25_Index storage
     class M5_GATE gate
+    class GUARD_IN guardrail
 ```
 
 ---
@@ -248,7 +272,28 @@ selected = (
 
 ---
 
-## 3. Complete System Flow — M1 to M5
+---
+
+### M6: LLM Generation, Verification & Guardrails
+Nhiệm vụ: Tích hợp LLM sinh câu trả lời kèm trích dẫn, đảm bảo an toàn đầu vào/đầu ra, và xác thực bằng 3 Checks (Evidence, Citation, Grounding).
+
+**Input Guardrail (T1/T2/T3):** Chặn Prompt Injection, System Leakage, và Query rỗng bằng bộ quy tắc Regex và Logic.
+
+**Kiến trúc Sinh Trích Dẫn và Hậu Kiểm (Controlled Generation):**
+Sự tách biệt rõ ràng trách nhiệm giữa việc sinh ra trích dẫn và xác thực trích dẫn:
+- **Retrieval (Cấp Evidence):** Tìm kiếm và cung cấp các chunk văn bản (Evidence) có sẵn `chunk_id` cho LLM.
+- **LLM Citation Generation (Sinh Answer & Reference):** LLM tự động đọc Evidence, sinh ra câu trả lời và bắt buộc chèn marker `[chunk_id]` vào cuối mỗi factual claim để báo cho hệ thống biết nó đang dựa vào chunk nào. (LLM có thể không trích dẫn, trích dẫn sai ID, hoặc trích dẫn ID có thật nhưng sai nội dung).
+- **Check 1 (Evidence Sufficiency):** Kiểm tra số lượng/chất lượng Evidence đầu vào trước khi gọi LLM.
+- **Check 2 (Citation Validity - Hậu kiểm ID):** Parser dùng regex quét `[chunk_id]` từ LLM output. Kiểm tra xem các ID này có THỰC SỰ tồn tại trong danh sách Evidence ban đầu hay không. (Ngăn chặn Hallucination ID ảo).
+- **Check 3 (Claim Grounding - Hậu kiểm Nội dung):** Nếu Check 2 Pass, dùng NLI (`mDeBERTa`) đối chiếu từng câu khẳng định của LLM với nội dung của `chunk_id` tương ứng xem có thực sự Support hay không. (Ngăn chặn Hallucination nội dung). Phân loại: GROUNDED, AMBIGUOUS, CONTRADICTION.
+
+**Output Guardrail:** Chặn PII, Credentials, API Keys, Prompt Leakage lọt ra ngoài.
+
+**Status:** ✅ HOÀN THÀNH (28/09/2026) — Tich̀ hợp Claude Haiku. 3-Checks Architecture (Evidence Sufficiency, Citation Validity, NLI Claim Grounding) hoàn thiện. Truthful Refusal Gate phân biệt 4 trạng thái. Conservative Aggregation Policy (any AMBIGUOUS → AMBIGUOUS). System Prompt với CITATION PRECISION Procedure Self-check.
+
+---
+
+## 3. Complete System Flow — M1 to M6
 
 ```mermaid
 flowchart LR
@@ -257,11 +302,11 @@ flowchart LR
     Chunks -->|Embed| Vectors
     Vectors -->|Index| DB[(SQLite)]
 
-    Query[User\nQuery] -->|Dense| Dense[KNN Top-20]
-    Query -->|Sparse| Sparse[BM25 Top-20]
+    Query[User\nQuery] -->|T1/T2/T3| InGuard{Input\nGuardrail}
+    InGuard -->|Pass| Dense[KNN Top-20]
+    InGuard -->|Fail| RejectOut([Reject])
 
     Dense --> Pool[Candidate Pool]
-    Sparse --> Pool
     DB --> Dense
 
     Pool -->|Min-Max\nFusion| Baseline[Baseline\nRanking]
@@ -269,13 +314,18 @@ flowchart LR
     Baseline -->|CE Score| BGE[BGE\nReranker]
     BGE --> Gate{Decision\nGate}
 
-    Gate -->|score>=0.20\nOR rank<=1| BGEResult[BGE\nTop-1]
-    Gate -->|otherwise| BaseResult[Baseline\nTop-1]
+    Gate --> Evidence[Final\nEvidence]
 
-    BGEResult --> Evidence[Evidence]
-    BaseResult --> Evidence
+    Evidence --> Check1{Check 1:\nSufficiency}
+    Check1 -->|Pass| LLM[LLM\nGeneration]
+    Check1 -->|Fail| RejectOut
 
-    Evidence -.->|M6| LLM[Generate\nAnswer]
+    LLM --> Check23{Check 2/3:\nVerification}
+    Check23 -->|Contradict| RejectOut
+    Check23 -->|Pass/Amb| OutGuard{Output\nGuardrail}
+
+    OutGuard -->|Fail| RejectOut
+    OutGuard -->|Pass| FinalApi([Final API\nContract])
 
     style Gate fill:#ede7f6,stroke:#6a1b9a,stroke-width:3px
     style Evidence fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px
@@ -290,7 +340,9 @@ flowchart LR
 |-----------|--------|-----------|
 | Decision Gate | ✅ CLOSED | H6 supported on Holdout but gate not production-approved yet |
 | holdout_008 | Residual risk | BGE score=0.9960 but still caused regression — score ≠ always correct |
-| Generation | ⏳ M6 | LLM integration pending |
+| Generation (M6) | ✅ CLOSED (28/09/2026) | 3-Checks + Truthful Refusal Gate hoàn thiện |
+| Check 1 Bypass | Tech debt | check_1_sufficiency() bị comment out, threshold calibrate cho BGE không phù hợp MPNet. Cần re-calibrate sau khi có ≥ 50 case |
+| Refusal Threshold | Tech debt | log_only mode, chưa tuân threshold. Cần ≥ 50 case có ground truth để derive từ ROC curve |
 | DOCX / PPTX | ⏳ M7 | Parsers not implemented |
 | CE Inference speed | Known | CPU float32 inference: ~25-40min for 35 cases |
 | Process isolation | Workaround | CE must run in subprocess to avoid Windows `0xC0000005` |

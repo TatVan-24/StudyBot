@@ -179,7 +179,7 @@ Dựa trên nền tảng Evaluation Contract ở trên, M4 đã tiến hành chu
 1. **M4-A (Hybrid Baseline)**: Chạy song song Dense và BM25, chứng minh Semantic và Lexical là 2 nguồn tín hiệu bổ trợ trực giao (Specialists).
 2. **M4-B (RRF Limitations)**: Phát hiện RRF (Reciprocal Rank Fusion) chỉ thưởng cho sự đồng thuận thứ hạng (Rank Agreement) mà bỏ qua độ lớn điểm số (Score Magnitude). Dẫn đến việc RRF trừng phạt Specialist trong các case có độ lệch hạng cao (Rank Disagreement).
 3. **M4-D (Score Fusion)**: Áp dụng Min-Max và Saturation Normalization để hợp nhất bằng Score thay vì Rank. Chứng minh Score Fusion bảo toàn được Score Magnitude, giúp giải cứu Specialist.
-4. **M4-E (Alpha Robustness Sweep)**: 
+4. **M4-E (Alpha Robustness Sweep)**:
    - Quét trọng số $\alpha$ từ $0.0 \rightarrow 1.0$.
    - Sử dụng Dual MRR để thiết lập Guardrails: `MRR Full` làm Primary, `MRR First` làm Mandatory Guardrail.
    - Phát hiện "Regime Transition" quanh ngưỡng $\alpha \approx 0.5$.

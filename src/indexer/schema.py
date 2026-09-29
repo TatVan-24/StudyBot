@@ -15,6 +15,8 @@ class SearchResult(BaseModel):
     chunk_index: int
     score: float
     document_id: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
     text: str
     source_block_ids: List[str]
     heading_context: List[str]

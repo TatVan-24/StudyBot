@@ -1,0 +1,62 @@
+# M6 Phase 1: Integration Skeleton
+
+Mục tiêu là chứng minh việc đấu nối (integration) giữa FastAPI và Retrieval pipeline hoạt động trơn tru. Giai đoạn này KHÔNG tập trung vào LLM Generation, KHÔNG có refusal logic, KHÔNG có citation intelligence. Mục đích là tạo nền tảng vững chắc để dễ dàng phân biệt lỗi Integration và lỗi Generation.
+
+## Constraints & Clarifications
+
+> [!WARNING]
+> **Dense Retrieval Only (Smoke Test)**
+> Giai đoạn 1 sẽ tạm dùng Dense Retrieval để chứng minh API tích hợp thành công (`FastAPI ↔ Retrieval adapter`). Việc này **KHÔNG** thay thế cho Frozen Retrieval Architecture của M5 (Dense + BM25 → MinMax → BGE Gate). M5 vẫn là chuẩn mực, Giai đoạn 1 chỉ là bước đệm integration.
+
+> [!IMPORTANT]
+> **Data Isolation**
+> Sẽ sử dụng `_data/m6_index.db` làm nơi lưu trữ vector cục bộ cho ứng dụng. **TUYỆT ĐỐI KHÔNG** đụng vào `m3_index.db` (đây là artifact evaluation đã bị freeze).
+
+> [!NOTE]
+> **Performance Benchmarking**
+> Cần thực hiện benchmark thực tế trên máy Local khi load model MPNet. Ghi nhận các thông số:
+> - Startup/load time
+> - First-request latency
+> - Warm-request latency
+> - RAM usage
+
+## Proposed Changes
+
+### Component: Backend Adapters
+Sửa đổi adapter kết nối Backend với Vector Store, loại bỏ giả lập keyword-search.
+
+#### [MODIFY] [vector.py](file:///d:/Personal%20Project/AWS%20StudyBot/src/backend/adapters/vector.py)
+Thay thế logic của `LocalVector` bằng pipeline thật:
+- **Khởi tạo:**
+  - Nạp `SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')`.
+  - Nạp `SQLiteVectorStore` trỏ đến `_data/m6_index.db`.
+  - Khởi tạo `StructureAwareChunker`.
+- **`ingest(doc_id, text, metadata)`:**
+  - `Upload → Parse (TXT) → Chunk → Index`
+  - Đưa `text` qua `txt_parser.build_blocks` và `to_parsed_blocks`.
+  - Cắt chunk bằng `StructureAwareChunker`.
+  - Embed qua MPNet.
+  - Lưu vào `m6_index.db` thông qua `upsert_index`.
+- **`search(query, top_k, filter)`:**
+  - `Query → Embed → L2 Search (Dense)`
+  - Format kết quả về dạng List of Dicts chứa thông tin chunk.
+
+### Component: Backend Handlers
+Điều chỉnh logic xử lý API để phản ánh Giai đoạn 1 (không có LLM).
+
+#### [MODIFY] [handlers.py](file:///d:/Personal%20Project/AWS%20StudyBot/src/backend/handlers.py)
+- **`handle_query`**:
+  - Không gọi AI client (`ai_client.invoke`).
+  - Gọi `vector_store.search`.
+  - Trích xuất `text` của Top-1 Chunk và gán làm `answer` giả.
+  - Kèm theo `chunk_id`, `document_id` và các metadata khác vào `citations`.
+
+## Exit Criteria (Phase 1)
+1. FastAPI starts successfully.
+2. POST `/upload` với TXT thành công.
+3. TXT được parse/chunk/index thành công vào `m6_index.db`.
+4. POST `/query` trả về đúng Top-1 chunk.
+5. Response giữ được `chunk_id`, `document_id`, và citation metadata.
+6. Không sửa Frozen M3/M4/M5 artifacts.
+
+Sau khi đạt đủ Exit Criteria này, ta mới bước sang Giai đoạn 2 (Intelligent Generation).

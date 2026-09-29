@@ -313,15 +313,15 @@ flowchart TD
     Pool --> BaseRank[Baseline Ranking]
     BaseRank --> BGECalc[BGE Cross-Encoder Score]
     BGECalc --> BGETop1[BGE Top-1]
-    
+
     BGETop1 --> Gate{Decision Gate}
-    
+
     Gate -- PASS --> OutBGE[BGE Top-1]
     Gate -- FAIL --> OutBase[Baseline Top-1]
-    
+
     OutBGE --> FinalRes[Final Result]
     OutBase --> FinalRes
-    
+
     FinalRes --> Eval[Evaluation]
     Eval --> Trace[Raw Case-level Trace]
     Trace --> Agg[Aggregate Metrics]

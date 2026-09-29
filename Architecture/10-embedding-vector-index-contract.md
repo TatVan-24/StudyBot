@@ -75,7 +75,7 @@ graph TD
         V --> W["Join Lineage<br>(source_block_ids)"]
         W --> X["Return List[SearchResult]"]
     end
-    
+
     classDef file fill:#f9f,stroke:#333,stroke-width:2px;
     classDef db fill:#bbf,stroke:#333,stroke-width:2px;
     class A,I file;

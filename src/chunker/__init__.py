@@ -3,7 +3,7 @@ from .chunker import BaseChunker, FixedSizeChunker, StructureAwareChunker, get_c
 
 __all__ = [
     "Chunk",
-    "ChunkBundle", 
+    "ChunkBundle",
     "ChunkValidator",
     "ChunkerStrategy",
     "BaseChunker",

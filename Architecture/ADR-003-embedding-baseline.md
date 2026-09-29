@@ -6,7 +6,7 @@ Accepted
 ## Context
 In Milestone 3, we need to convert textual chunks from our `StructureAwareChunker` (M2 output) into dense vector representations. These vectors will be indexed and stored locally alongside metadata for retrieval (KNN exact search via dot product).
 
-Our original system mapping provisionally suggested `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions, `max_seq_length=128`). However, the `StructureAwareChunker` packs content logically based on heading contexts, resulting in some chunks being up to 264 tokens long (e.g., Chunk 2 in our dataset). 
+Our original system mapping provisionally suggested `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions, `max_seq_length=128`). However, the `StructureAwareChunker` packs content logically based on heading contexts, resulting in some chunks being up to 264 tokens long (e.g., Chunk 2 in our dataset).
 
 If we use `MiniLM-L12-v2` with `max_seq_length=128`, it would lead to silent truncation. While we could truncate anyway or split the chunks, modifying the frozen chunking schema from M2 breaks the modular pipeline boundary. We strictly mandate a fail-fast mechanism to avoid truncation, as silent truncation corrupts downstream retrieval metrics (M4).
 

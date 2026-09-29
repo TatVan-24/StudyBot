@@ -119,3 +119,12 @@ evaluation/runs/m2-20260902-084228/
 evaluation/runs/m2-combined/
 evaluation/raw_pdf/
 evaluation/bundle_pdf_aws/
+
+# Local outputs and temp files
+outputs/
+test.txt
+test2.txt
+
+# Evaluation temp artifacts
+evaluation/results/*_tmp.json
+evaluation/scripts/test_check3_debug.py

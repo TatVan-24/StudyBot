@@ -1,0 +1,37 @@
+# Kế hoạch Phân tích M6: Merge Diagnostic & FP Forensics
+
+Mục tiêu: Đưa trường chẩn đoán `gold_match` vào dataset để biết Retrieval có lấy đúng gold chunk không, nhưng vẫn bảo lưu toàn vẹn việc đánh giá thủ công `ground_truth_label` (Evidence Sufficiency) của con người để đảm bảo tính chính xác của bài toán M6.
+
+## User Review Required
+> [!IMPORTANT]
+> (Đã chốt): Sự chênh lệch giữa **Retrieval exact-match** và **Evidence sufficiency** là rất lớn. Do đó `match_locator` chỉ được dùng làm diagnostic, con người phải trực tiếp đọc 35 case để dán nhãn `ground_truth_label`.
+
+## Proposed Changes
+
+### 1. `evaluation/scripts/`
+
+#### [NEW] [m6_step2_merge_diagnostic.py](file:///d:/Personal%20Project/AWS%20StudyBot/evaluation/scripts/m6_step2_merge_diagnostic.py)
+Script này sẽ:
+1. Đọc file raw `m6_dev_sufficiency_ground_truth.jsonl` và `test-v3.jsonl`.
+2. Sử dụng hàm `match_locator` để đối chiếu `chunk_id` của Final Evidence với Ground Truth locator.
+3. Bổ sung trường `gold_match` (1 hoặc 0) vào mỗi record.
+4. Giữ nguyên `ground_truth_label` là `null`.
+5. Ghi đè lại file `m6_dev_sufficiency_ground_truth.jsonl` để sẵn sàng cho Human Annotation.
+
+#### [NEW] [m6_step3_fp_forensics.py](file:///d:/Personal%20Project/AWS%20StudyBot/evaluation/scripts/m6_step3_fp_forensics.py)
+Script này sẽ được viết sau khi Human Annotation hoàn tất:
+1. Quét file đã có `ground_truth_label`.
+2. Lọc ra các case bị **False Positive (FP)**: `ground_truth_label == 0` NHƯNG `signals.bge_top1_score >= [threshold]`. (Threshold sẽ được truyền vào qua tham số `--threshold`, không hardcode).
+3. In báo cáo phân tích để mổ xẻ nguyên nhân.
+
+## Verification Plan
+
+### Automated Tests
+- Chạy script step 2 `python evaluation/scripts/m6_step2_merge_diagnostic.py`.
+- **Check Invariant:** 
+  - `query_id` unique và đúng 35 records.
+  - Các trường cũ (`query`, `retrieved_context`, `signals`) không bị thay đổi.
+  - `ground_truth_label` vẫn là `null`.
+- **Check Thêm mới:**
+  - 35/35 records đều có field `gold_match`.
+  - Giá trị của `gold_match` chỉ thuộc tập `{0, 1}`.

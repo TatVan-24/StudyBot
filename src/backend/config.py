@@ -19,6 +19,9 @@ class Config:
     ai_backend: str = _env("AI_BACKEND", "local")
     ai_model_id: str = _env("AI_MODEL_ID", "anthropic.claude-3-5-haiku-20241022-v1:0")
     aws_region: str = _env("AWS_REGION", "ap-southeast-1")
+    openai_api_key: str = _env("OPENAI_API_KEY", "")
+    openai_base_url: str = _env("OPENAI_BASE_URL", "")
+    openai_model: str = _env("OPENAI_MODEL", "claude-sonnet-5")
 
     # Storage
     storage_backend: str = _env("STORAGE_BACKEND", "local")

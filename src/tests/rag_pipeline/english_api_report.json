@@ -1,0 +1,229 @@
+{
+  "summary": {
+    "total": 22,
+    "passed": 0,
+    "accuracy": 0.0
+  },
+  "results": [
+    {
+      "id": "GRD-04",
+      "category": "Verification - Grounding",
+      "query": "According to the documents, does every agent require multiple external tools?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 3.68
+    },
+    {
+      "id": "GRD-05",
+      "category": "Verification - Grounding",
+      "query": "According to the documents, does every RAG system eliminate hallucination?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.31
+    },
+    {
+      "id": "GRD-06",
+      "category": "Verification - Grounding",
+      "query": "According to the documents, does correlation prove causation?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.21
+    },
+    {
+      "id": "CROSS-01",
+      "category": "Cross-Document",
+      "query": "How does semantic search in Qdrant support a RAG system?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.36
+    },
+    {
+      "id": "CROSS-02",
+      "category": "Cross-Document",
+      "query": "How does retrieval contribute to the agent architecture described by Berkeley?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 7.18
+    },
+    {
+      "id": "CROSS-03",
+      "category": "Cross-Document",
+      "query": "Compare the role of retrieval in RAG with the role of observability data in AIOps.",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 4.59
+    },
+    {
+      "id": "CROSS-04",
+      "category": "Cross-Document",
+      "query": "What similarities exist between semantic retrieval and AIOps correlation?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.58
+    },
+    {
+      "id": "CROSS-05",
+      "category": "Cross-Document",
+      "query": "Are HNSW and anomaly detection solving the same problem?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.4
+    },
+    {
+      "id": "CROSS-06",
+      "category": "Cross-Document",
+      "query": "Can an AIOps platform use an LLM agent to reason over metrics, logs, and traces?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.28
+    },
+    {
+      "id": "PARA-01",
+      "category": "Semantic Variation",
+      "query": "Why does a vector database differ from a traditional SQL database?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.29
+    },
+    {
+      "id": "PARA-02",
+      "category": "Semantic Variation",
+      "query": "What does HNSW actually do during vector retrieval?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.04
+    },
+    {
+      "id": "PARA-03",
+      "category": "Semantic Variation",
+      "query": "Why shouldn't I blindly use 0.5 as a similarity cutoff?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.23
+    },
+    {
+      "id": "PARA-04",
+      "category": "Semantic Variation",
+      "query": "What problem is RAG trying to solve?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.3
+    },
+    {
+      "id": "PARA-05",
+      "category": "Semantic Variation",
+      "query": "What does an agent gain by interacting with external tools?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.24
+    },
+    {
+      "id": "PARA-06",
+      "category": "Semantic Variation",
+      "query": "Why do AIOps systems need metrics, logs, traces, and topology?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.26
+    },
+    {
+      "id": "PARA-07",
+      "category": "Semantic Variation",
+      "query": "What does tracing tell me when debugging a distributed system?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.67
+    },
+    {
+      "id": "PARA-08",
+      "category": "Semantic Variation",
+      "query": "Why is reducing alert noise important?",
+      "expected_status": "acceptance",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.29
+    },
+    {
+      "id": "FP-01",
+      "category": "False Premise",
+      "query": "Since HNSW always guarantees exact nearest-neighbor search, why is it so accurate?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.31
+    },
+    {
+      "id": "FP-02",
+      "category": "False Premise",
+      "query": "Since cosine similarity is always the correct metric, why does Qdrant require a metric choice?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.4
+    },
+    {
+      "id": "FP-03",
+      "category": "False Premise",
+      "query": "Since anomaly detection directly finds root causes, how does it identify them?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.31
+    },
+    {
+      "id": "FP-04",
+      "category": "False Premise",
+      "query": "Since every agent must use multiple tools, how does Berkeley recommend choosing them?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.28
+    },
+    {
+      "id": "FP-05",
+      "category": "False Premise",
+      "query": "Since RAG completely prevents hallucinations, why do we need grounding checks?",
+      "expected_status": "ambiguous",
+      "actual_status": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "elapsed_s": 2.45
+    }
+  ]
+}

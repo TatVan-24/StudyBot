@@ -1,0 +1,55 @@
+# Chuẩn bị Dữ liệu Ground Truth cho Check 1 (Evidence Sufficiency)
+
+Mục tiêu: Viết script chạy bộ Dev Set (`test-v3.jsonl`) qua pipeline truy xuất M5 hiện tại để trích xuất `retrieved_context` (chỉ 1 chunk Final Evidence) kèm các `signals` thô, từ đó sinh ra file JSONL rỗng (chưa dán nhãn) phục vụ cho việc Human-Annotation.
+
+**Lưu ý Tư duy:**
+- Phase hiện tại đánh giá single-chunk sufficiency. Multi-chunk sufficiency là scope tương lai.
+- Script này chỉ tạo dataset + raw evidence + raw signals, **không** tính threshold.
+- Annotator (con người) sẽ đánh giá thủ công, không nên bị bias bởi các score trong quá trình đánh giá.
+
+## Proposed Changes
+
+### `evaluation/scripts/`
+
+#### [NEW] [m6_step1_prepare_ground_truth.py](file:///d:/Personal%20Project/AWS%20StudyBot/evaluation/scripts/m6_step1_prepare_ground_truth.py)
+Script này sẽ:
+1. Đọc câu hỏi từ `test-v3.jsonl`.
+2. Chạy qua MPNet (Dense) + BM25 (Sparse) để lấy Baseline Top-20.
+3. Chạy BGE Reranker qua subprocess (kế thừa script của M5).
+4. Áp dụng M5 Decision Gate (Frozen Rule) để chốt ra đúng 1 Final Evidence chunk.
+5. Đóng gói thành format Ground Truth JSON bao gồm Context (1 chunk) và Signals thô:
+   ```json
+   {
+     "query_id": "...",
+     "query": "...",
+     "retrieved_context": [
+       {
+         "chunk_id": "...",
+         "text": "..."
+       }
+     ],
+     "signals": {
+       "baseline_top1_score": 0.82,
+       "bge_top1_score": 0.65,
+       "bge_top2_score": 0.50,
+       "bge_score_gap": 0.15,
+       "gate_action": "BGE",
+       "baseline_rank_of_bge_top1": 4
+     },
+     "ground_truth_label": null,
+     "label_rationale": "",
+     "annotator": "",
+     "annotated_at": ""
+   }
+   ```
+6. Nếu một query không tìm thấy chunk nào do lỗi hoặc rỗng, báo STATUS = BLOCKED, không bỏ qua ngầm.
+7. Xuất ra file `evaluation/datasets/m6_dev_sufficiency_ground_truth.jsonl`.
+
+## Verification Plan
+
+### Automated Tests
+- Chạy `python evaluation/scripts/m6_step1_prepare_ground_truth.py`.
+- **Check 1:** 35/35 query được xử lý thành công (file output có đúng 35 dòng).
+- **Check 2:** 35/35 case có chính xác 1 final retrieved chunk trong `retrieved_context`.
+- **Check 3:** 35/35 case có đầy đủ các raw signals cần thiết cho analysis.
+- Đảm bảo các field `ground_truth_label` đều là `null`.

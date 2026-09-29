@@ -1,6 +1,6 @@
 """Factory: read env config + instantiate concrete adapters."""
-from backend.config import config
-from backend.adapters import ai, storage, userstore, vector
+from src.backend.config import config
+from src.backend.adapters import ai, storage, userstore, vector
 
 
 def make_ai():
@@ -8,7 +8,13 @@ def make_ai():
         return ai.BedrockAI(region=config.aws_region, model_id=config.ai_model_id)
     if config.ai_backend == "local":
         return ai.LocalAI()
-    raise ValueError(f"Unknown AI_BACKEND: {config.ai_backend!r} (expected 'bedrock' or 'local')")
+    if config.ai_backend == "openai":
+        return ai.OpenAIAdapter(
+            api_key=config.openai_api_key,
+            base_url=config.openai_base_url,
+            model=config.openai_model
+        )
+    raise ValueError(f"Unknown AI_BACKEND: {config.ai_backend!r} (expected 'bedrock', 'local', or 'openai')")
 
 
 def make_storage():

@@ -172,24 +172,24 @@ class ChunkValidator:
     @staticmethod
     def validate_invariants(chunk: Chunk, block_ids_in_blocks_jsonl: set) -> List[str]:
         errors = []
-        
+
         # I2: source_block_ids non-empty
         if not chunk.source_block_ids:
             errors.append("I2 Violation: source_block_ids cannot be empty")
-        
+
         # I2: each ID exists in blocks.jsonl
         for block_id in chunk.source_block_ids:
             if block_id not in block_ids_in_blocks_jsonl:
                 errors.append(f"I2 Violation: {block_id} not found")
-        
+
         # I4: token_count > 0
         if chunk.token_count <= 0:
             errors.append("I4 Violation: token_count must be > 0")
-        
+
         # I5: chunk_index >= 1
         if chunk.chunk_index < 1:
             errors.append("I5 Violation: chunk_index must be >= 1")
-        
+
         return errors
 ```
 

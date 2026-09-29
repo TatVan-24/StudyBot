@@ -1,0 +1,58 @@
+{
+  "summary": {
+    "total_cases": 3,
+    "provider_errors": 0,
+    "valid_calls": 3,
+    "passed": 2,
+    "accuracy_on_valid": 66.67,
+    "metrics": {
+      "citation_present_rate": "2/3",
+      "check2_failure_rate": "1/3",
+      "check3_failure_rate": "2/3"
+    }
+  },
+  "results": [
+    {
+      "id": "GRD-04",
+      "expected": "ambiguous",
+      "actual": "rejection",
+      "pass": false,
+      "reason": "Check 2 Failed: No citation provided",
+      "provider_error": false,
+      "has_citation": false,
+      "check2_fail": true,
+      "check3_reason": "",
+      "latency_retrieval": 95,
+      "latency_generation": 2373,
+      "latency_total": 2470
+    },
+    {
+      "id": "GRD-05",
+      "expected": "ambiguous",
+      "actual": "ambiguous",
+      "pass": true,
+      "reason": "Check 3 Failed: Ambiguous grounding",
+      "provider_error": false,
+      "has_citation": true,
+      "check2_fail": false,
+      "check3_reason": "Check 3 Failed: Ambiguous grounding",
+      "latency_retrieval": 72,
+      "latency_generation": 1275,
+      "latency_total": 1348
+    },
+    {
+      "id": "GRD-06",
+      "expected": "ambiguous",
+      "actual": "ambiguous",
+      "pass": true,
+      "reason": "Check 3 Failed: Ambiguous grounding",
+      "provider_error": false,
+      "has_citation": true,
+      "check2_fail": false,
+      "check3_reason": "Check 3 Failed: Ambiguous grounding",
+      "latency_retrieval": 50,
+      "latency_generation": 1458,
+      "latency_total": 1509
+    }
+  ]
+}
