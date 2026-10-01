@@ -1,7 +1,7 @@
 import json
 import re
 from src.backend.app import userstore, ai_client
-from src.backend.adapters import factory
+from src.rag_pipeline.llm.adapters import factory
 
 vector_store = factory.make_vector()
 USER_ID = "mixigaming@gmail.com"

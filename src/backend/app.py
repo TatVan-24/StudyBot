@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.backend.config import config
-from src.backend.adapters import factory
+from src.rag_pipeline.llm.adapters import factory
 from src.backend import handlers
 
 
@@ -162,6 +162,42 @@ def list_docs(x_user_id: str | None = Header(default=None)) -> dict:
 def recent(x_user_id: str | None = Header(default=None), limit: int = 10) -> dict:
     """Kept for backward compat. Will be removed after Phase 5 (frontend)."""
     return handlers.handle_recent_queries(_resolve_user_id(x_user_id), userstore, limit=limit)
+
+
+@app.post("/docs/{doc_id}/detach")
+def detach_doc(
+    doc_id: str,
+    session_id: str,
+    x_user_id: str | None = Header(default=None),
+) -> dict:
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    result = handlers.handle_detach_doc(doc_id, session_id, _resolve_user_id(x_user_id), userstore)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("reason"))
+    return result
+
+
+@app.delete("/docs/{doc_id}")
+def delete_doc_global(
+    doc_id: str,
+    x_user_id: str | None = Header(default=None),
+) -> dict:
+    result = handlers.handle_delete_doc_global(
+        doc_id=doc_id,
+        user_id=_resolve_user_id(x_user_id),
+        userstore=userstore,
+        vector_store=vector_store,
+        storage=storage
+    )
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("reason"))
+    return result
+
+
+@app.get("/progress/summary")
+def progress_summary(x_user_id: str | None = Header(default=None)) -> dict:
+    return handlers.handle_progress_summary(_resolve_user_id(x_user_id), userstore, handlers.LOG_DIR)
 
 
 # ── Static frontend ────────────────────────────────────────────────────────────

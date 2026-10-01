@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from src.backend.app import userstore, ai_client, vector_store
-from src.backend.handlers import handle_query
+from src.rag_pipeline.llm.handlers import handle_query
 from src.backend import validators
 
 USER_ID = "eval_english_user"

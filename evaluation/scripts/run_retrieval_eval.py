@@ -7,8 +7,8 @@ from typing import List, Dict, Any, Set
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from src.indexer.embedding import EmbeddingEngine
-from src.indexer.vector_store import SQLiteVectorStore
+from src.rag_pipeline.indexer.embedding import EmbeddingEngine
+from src.rag_pipeline.indexer.vector_store import SQLiteVectorStore
 from evaluation.scripts.validate_resolution import load_blocks, match_locator
 
 DEV_V2_PATH = "d:/Personal Project/AWS StudyBot/evaluation/datasets/development-v2.jsonl"

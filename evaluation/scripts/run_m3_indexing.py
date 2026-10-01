@@ -6,9 +6,9 @@ sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 import json
 import datetime
 import numpy as np
-from src.indexer.embedding import EmbeddingEngine
-from src.indexer.vector_store import SQLiteVectorStore
-from src.indexer.schema import IndexMeta
+from src.rag_pipeline.indexer.embedding import EmbeddingEngine
+from src.rag_pipeline.indexer.vector_store import SQLiteVectorStore
+from src.rag_pipeline.indexer.schema import IndexMeta
 
 def run_indexing():
     input_file = Path("evaluation/runs/m2-final/chunks_structure.jsonl")

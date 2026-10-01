@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
   <title>StudyBot — Learn from your own notes</title>
-  <link rel="stylesheet" href="/static/styles.css?v=7">
+  <link rel="stylesheet" href="/static/styles.css?v=8">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -61,10 +62,10 @@
       <div class="sidebar-brand"><a class="brand" href="#"><span
             class="brand-mark">S</span><span>Study<span>Bot</span></span></a><button class="icon-button mobile-only"
           type="button" onclick="toggleSidebar()">×</button></div>
-      <nav class="nav-list"><button class="nav-item active"><span>⌂</span>Workspace</button><button class="nav-item"
-          onclick="document.querySelector('.library-panel').scrollIntoView({behavior:'smooth'})"><span>▤</span>My
-          library</button><button class="nav-item"
-          onclick="toast('Learning progress is planned for the next iteration.', 'info')"><span>◫</span>Progress</button>
+      <nav class="nav-list">
+        <button id="nav-workspace" class="nav-item active" onclick="showPanel('workspace')"><span>⌂</span>Workspace</button>
+        <button id="nav-library" class="nav-item" onclick="showPanel('library')"><span>▤</span>My library</button>
+        <button id="nav-progress" class="nav-item" onclick="showPanel('progress')"><span>◫</span>Progress</button>
 
         <button class="new-chat-btn" onclick="newChat()" type="button">
             <span>+</span> New Chat
@@ -139,12 +140,52 @@
           <div class="panel-heading">
             <div><span class="section-kicker">Library</span>
               <h2>Your documents</h2>
-            </div><button class="button button-secondary compact" type="button"
-              onclick="refreshDocuments()">Refresh</button>
+            </div>
+            <div class="panel-actions" style="display: flex; gap: 10px; align-items: center;">
+              <input type="text" id="doc-search" placeholder="Filter by name..." oninput="filterDocs()" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 14px;">
+              <button class="button button-secondary compact" type="button" onclick="refreshDocuments()">Refresh</button>
+            </div>
           </div>
           <div id="docs" class="doc-list">
-            <div class="empty-state"><strong>Your library is empty</strong><span>Upload a document to start
-                learning.</span></div>
+            <div class="empty-state"><strong>Your library is empty</strong><span>Upload a document to start learning.</span></div>
+          </div>
+        </section>
+
+        <section class="panel progress-panel" style="display: none; padding: 20px;">
+          <div class="panel-heading">
+            <div><span class="section-kicker">Analytics</span>
+              <h2>Learning Progress</h2>
+            </div>
+            <button class="button button-secondary compact" type="button" onclick="loadProgress()">Refresh</button>
+          </div>
+          
+          <div class="progress-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;">
+            <div class="metric-card" style="background: rgba(255,255,255,0.7); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0;">
+              <div id="prog-queries" style="font-size: 32px; font-weight: 700; color: #1e293b;">0</div>
+              <div style="font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 600;">Total Queries</div>
+            </div>
+            <div class="metric-card" style="background: rgba(255,255,255,0.7); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0;">
+              <div id="prog-sessions" style="font-size: 32px; font-weight: 700; color: #1e293b;">0</div>
+              <div style="font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 600;">Total Sessions</div>
+            </div>
+            <div class="metric-card" style="background: rgba(255,255,255,0.7); padding: 16px; border-radius: 12px; text-align: center; border: 1px solid #e2e8f0;">
+              <div style="font-size: 24px; font-weight: 700; color: #1e293b; padding-top: 5px;"><span id="prog-p50">0</span>ms / <span id="prog-p95">0</span>ms</div>
+              <div style="font-size: 12px; color: #64748b; text-transform: uppercase; font-weight: 600; margin-top: 7px;">Latency (P50/P95)</div>
+            </div>
+          </div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div style="background: rgba(255,255,255,0.7); padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0; display: flex; flex-direction: column;">
+              <h3 style="margin: 0 0 12px; font-size: 14px; color: #475569;">Status Distribution</h3>
+              <div style="position: relative; height: 300px; width: 100%;">
+                <canvas id="statusChart"></canvas>
+              </div>
+            </div>
+            <div style="background: rgba(255,255,255,0.7); padding: 16px; border-radius: 12px; border: 1px solid #e2e8f0;">
+              <h3 style="margin: 0 0 12px; font-size: 14px; color: #475569;">Recent Queries</h3>
+              <ul id="recent-queries-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px;">
+              </ul>
+            </div>
           </div>
         </section>
         <details id="debug-panel" class="debug-panel" style="display: none;">

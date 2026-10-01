@@ -19,7 +19,10 @@ TÀI LIỆU (EVIDENCE):
 QUY TẮC NGHIÊM NGẶT:
 1. CHỈ sử dụng thông tin từ TÀI LIỆU được cung cấp. Không sử dụng kiến thức bên ngoài, không tự bịa thông tin.
 2. Nếu TÀI LIỆU không chứa đủ thông tin để trả lời, hãy nói rõ: "Tôi không tìm thấy đủ thông tin trong tài liệu."
-3. Trả lời bằng tiếng Việt, ngắn gọn, súc tích và dễ hiểu.
+3. LANGUAGE: Answer in the SAME LANGUAGE as the user's question.
+   - English question → English answer
+   - Vietnamese question → Vietnamese answer
+   - Do NOT default to any specific language.
 
 CRITICAL FORMAT RULES:
 - ALWAYS place citations inline immediately after the relevant claim, e.g., "S3 Glacier giá $0.004/GB [sha256:abc123]."
@@ -80,33 +83,35 @@ def format_evidence(evidence_list: List[Dict[str, Any]]) -> tuple[str, List[Dict
 
     return evidence_text, citations
 
+from src.rag_pipeline.llm.model_rotator import call_with_rotation
+
 def generate_answer(query: str, evidence_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Generate an answer using the configured OpenAI-compatible API.
+    Generate an answer using OpenAI-compatible API with Model Rotation & Quota Tracking.
     """
     evidence_text, citations = format_evidence(evidence_list)
-
     prompt = PROMPT_TEMPLATE.format(evidence_text=evidence_text, query=query)
+    messages = [
+        {"role": "system", "content": "You are a helpful technical assistant. Respond in the SAME LANGUAGE as the user's question (English question → English answer; Vietnamese question → Vietnamese answer). Strictly follow the citation rules."},
+        {"role": "user", "content": prompt}
+    ]
 
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": "You are a helpful technical assistant. Always answer in Vietnamese and strictly follow the citation rules."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
-            max_tokens=1024
+        answer, model_used = call_with_rotation(
+            client=client,
+            messages=messages,
+            max_attempts=5,
+            threshold=5,
         )
-        answer = response.choices[0].message.content
-
         return {
             "answer": answer,
-            "citations": citations
+            "citations": citations,
+            "model_used": model_used,
         }
     except Exception as e:
-        print(f"Error calling LLM: {e}")
+        print(f"Error in generate_answer: {e}")
         return {
             "answer": f"Lỗi khi gọi mô hình: {e}",
-            "citations": []
+            "citations": [],
+            "model_used": None,
         }

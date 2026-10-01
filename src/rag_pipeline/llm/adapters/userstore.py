@@ -213,6 +213,16 @@ class SQLiteUserStore:
             for r in cur.fetchall()
         ]
 
+    def delete_doc_global(self, user_id: str, doc_id: str) -> dict:
+        cur = self.conn.execute("SELECT metadata FROM user_docs WHERE user_id = ? AND doc_id = ?", (user_id, doc_id))
+        row = cur.fetchone()
+        metadata = json.loads(row[0]) if row and row[0] else {}
+        
+        self.conn.execute("DELETE FROM user_docs WHERE user_id = ? AND doc_id = ?", (user_id, doc_id))
+        self.conn.execute("DELETE FROM session_documents WHERE doc_id = ?", (doc_id,))
+        self.conn.commit()
+        return metadata
+
     # ── Session methods ───────────────────────────────────────────────────────
 
     def create_session(self, user_id: str, title: str = None) -> str:
@@ -289,6 +299,15 @@ class SQLiteUserStore:
         self.conn.commit()
         return True
 
+    def remove_doc_from_session(self, session_id: str, doc_id: str) -> bool:
+        """Xóa doc khỏi session."""
+        cur = self.conn.execute(
+            "DELETE FROM session_documents WHERE session_id = ? AND doc_id = ?",
+            (session_id, doc_id)
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     def get_session_docs(self, session_id: str) -> list:
         """List doc_ids trong session."""
         cur = self.conn.execute(
@@ -302,6 +321,14 @@ class SQLiteUserStore:
             "SELECT COUNT(*) FROM session_documents WHERE session_id = ?",
             (session_id,),
         )
+        return cur.fetchone()[0]
+
+    def count_sessions(self, user_id: str) -> int:
+        cur = self.conn.execute("SELECT COUNT(*) FROM sessions WHERE user_id = ?", (user_id,))
+        return cur.fetchone()[0]
+
+    def count_queries(self, user_id: str) -> int:
+        cur = self.conn.execute("SELECT COUNT(*) FROM user_queries WHERE user_id = ?", (user_id,))
         return cur.fetchone()[0]
 
     def update_session_activity(self, session_id: str) -> None:

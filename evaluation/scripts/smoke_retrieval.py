@@ -4,8 +4,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 import json
-from src.indexer.embedding import EmbeddingEngine
-from src.indexer.vector_store import SQLiteVectorStore
+from src.rag_pipeline.indexer.embedding import EmbeddingEngine
+from src.rag_pipeline.indexer.vector_store import SQLiteVectorStore
 
 def run_smoke_retrieval():
     db_path = Path("evaluation/index/m3_index.db")

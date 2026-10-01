@@ -44,7 +44,7 @@ REFUSAL_PATTERNS = re.compile(
     r"("
     r"tôi không tìm thấy|không tìm thấy đủ thông tin|"
     r"không đủ thông tin|không có thông tin|"
-    r"i couldn'?t find|not enough information|"
+    r"i couldn'?t find|i don'?t find|not enough information|"
     r"i cannot answer|i can'?t answer|"
     r"insufficient information"
     r")",

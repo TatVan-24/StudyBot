@@ -63,6 +63,7 @@ def _make_response(
     scores: dict = None,
     latency: dict = None,
     reason: str = None,
+    model_used: str = None,
     userstore=None,
     skip_log: bool = False,
 ) -> dict:
@@ -81,6 +82,8 @@ def _make_response(
     }
     if reason:
         response["metadata"]["reason"] = reason
+    if model_used:
+        response["metadata"]["model_used"] = model_used
 
     if not skip_log and userstore:
         turn_index = userstore.next_turn_index(session_id)
@@ -395,8 +398,8 @@ def handle_query(
     #   - truthful_refusal (context không đủ)  → status=refusal
     #   - false_refusal    (context đủ)        → status=rejection với reason rõ
     #   - format error     (không phải refusal) → status=rejection như cũ
-    if check2 == "MISSING":
-        cls = refusal_mod.classify(res["answer"], query, chunks)
+    cls = refusal_mod.classify(res["answer"], query, chunks)
+    if cls["refused"]:
         print(f"[REFUSAL] label={cls['label']} refused={cls['refused']} "
               f"sufficient={cls['context_sufficient']} "
               f"top1={cls['diagnostics']['top1_score']} "
@@ -406,7 +409,7 @@ def handle_query(
         if cls["label"] == "truthful_refusal":
             return _refusal_response(
                 answer=res["answer"],
-                citations=[],
+                citations=res.get("citations", []),
                 reason="Truthful refusal: context insufficient",
                 latency=base_latency,
             )
@@ -416,14 +419,14 @@ def handle_query(
                 "False refusal: context sufficient but LLM refused",
                 base_latency,
             )
-        else:
-            # format error (không có refusal pattern)
-            return _reject(
-                res["answer"],
-                "Check 2 Failed: No citation provided",
-                base_latency,
-            )
 
+    if check2 == "MISSING":
+        # format error (không có refusal pattern)
+        return _reject(
+            res["answer"],
+            "Check 2 Failed: No citation provided",
+            base_latency,
+        )
     elif check2 == "INVALID":
         return _ambiguous(res["answer"], res.get("citations", []), "Check 2 Failed: Hallucinated citation", base_latency)
 
@@ -529,12 +532,8 @@ def handle_query(
             continue
         check3_results.append(validators.check_3_grounding(claim, chunks=[{"text": claim_evidence}]))
 
-    if not check3_results:
-        overall_grounding = "GROUNDED"
-    elif "CONTRADICTION" in check3_results:
+    if "CONTRADICTION" in check3_results:
         overall_grounding = "CONTRADICTION"
-    elif "AMBIGUOUS" in check3_results:
-        overall_grounding = "AMBIGUOUS"
     else:
         overall_grounding = "GROUNDED"
 
@@ -561,6 +560,7 @@ def handle_query(
         strategy={"retrieval": "dense", "rerank": None, "gate": "pass"},
         scores=_build_scores(chunks),
         latency=base_latency,
+        model_used=res.get("model_used"),
         userstore=userstore,
     )
 
@@ -604,3 +604,84 @@ def handle_delete_query(user_id: str, query_id: int, userstore) -> dict:
         userstore.delete_query(user_id, query_id)
         return {"status": "deleted", "query_id": query_id}
     return {"status": "error", "detail": "User store does not support deleting queries."}
+
+
+def handle_detach_doc(doc_id: str, session_id: str, user_id: str, userstore) -> dict:
+    session = userstore.get_session(session_id, user_id)
+    if not session:
+        return {"status": "error", "reason": "Session not found"}
+    success = userstore.remove_doc_from_session(session_id, doc_id)
+    if success:
+        return {"status": "detached", "doc_id": doc_id}
+    return {"status": "error", "reason": "Doc not found in session"}
+
+
+def handle_delete_doc_global(doc_id: str, user_id: str, userstore, vector_store, storage) -> dict:
+    metadata = userstore.delete_doc_global(user_id, doc_id)
+    if not metadata:
+        return {"status": "error", "reason": "Doc not found"}
+        
+    location = metadata.get("location")
+    if location:
+        try:
+            import os
+            if os.path.exists(location):
+                os.remove(location)
+        except Exception as e:
+            print(f"Error deleting file {location}: {e}")
+            
+    if hasattr(vector_store, "delete_doc"):
+        try:
+            vector_store.delete_doc(doc_id)
+        except Exception as e:
+            print(f"Error deleting vector for {doc_id}: {e}")
+            
+    return {"status": "deleted", "doc_id": doc_id}
+
+
+def handle_progress_summary(user_id: str, userstore, log_dir: Path) -> dict:
+    total_queries = getattr(userstore, 'count_queries', lambda uid: 0)(user_id)
+    total_sessions = getattr(userstore, 'count_sessions', lambda uid: 0)(user_id)
+    recent_queries = userstore.recent_queries(user_id, limit=5)
+    
+    status_counts = {"acceptance": 0, "ambiguous": 0, "rejection": 0, "refusal": 0}
+    latencies = []
+    
+    for log_file in log_dir.glob("*.jsonl"):
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip(): continue
+                    try:
+                        record = json.loads(line)
+                        if record.get("user_id") == user_id:
+                            st = record.get("status")
+                            if st in status_counts:
+                                status_counts[st] += 1
+                            metrics = record.get("metrics") or {}
+                            lat = metrics.get("latency_ms", {}).get("total")
+                            if lat is not None:
+                                latencies.append(lat)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+    total_log_queries = sum(status_counts.values()) or 1
+    status_distribution = {k: round(v / total_log_queries * 100, 1) for k, v in status_counts.items()}
+    
+    latency_p50 = 0
+    latency_p95 = 0
+    if latencies:
+        latencies.sort()
+        latency_p50 = latencies[int(len(latencies) * 0.50)]
+        latency_p95 = latencies[int(len(latencies) * 0.95)]
+        
+    return {
+        "total_queries": total_queries,
+        "total_sessions": total_sessions,
+        "status_distribution": status_distribution,
+        "latency_p50": latency_p50,
+        "latency_p95": latency_p95,
+        "recent_queries": recent_queries
+    }

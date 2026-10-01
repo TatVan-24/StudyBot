@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-from src.parser.pdf.pdf_adapter import adapt_opendataloader_json_to_parsed_blocks, parse_pdf_bundle
+from src.rag_pipeline.parser.pdf.pdf_adapter import adapt_opendataloader_json_to_parsed_blocks, parse_pdf_bundle
 
 
 def test_adapt_opendataloader_json_maps_elements_correctly():

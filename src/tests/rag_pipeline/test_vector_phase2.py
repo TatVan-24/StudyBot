@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from src.backend.adapters.vector import LocalVector
+from src.rag_pipeline.llm.adapters.vector import LocalVector
 
 
 def clean_db():

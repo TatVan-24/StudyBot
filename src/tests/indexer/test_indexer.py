@@ -3,9 +3,9 @@ import numpy as np
 import os
 import sqlite3
 from typing import List
-from src.indexer.schema import IndexMeta, SearchResult
-from src.indexer.embedding import EmbeddingEngine
-from src.indexer.vector_store import SQLiteVectorStore
+from src.rag_pipeline.indexer.schema import IndexMeta, SearchResult
+from src.rag_pipeline.indexer.embedding import EmbeddingEngine
+from src.rag_pipeline.indexer.vector_store import SQLiteVectorStore
 
 def test_index_meta_schema():
     meta = IndexMeta(
