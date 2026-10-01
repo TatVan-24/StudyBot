@@ -128,3 +128,5 @@ test2.txt
 # Evaluation temp artifacts
 evaluation/results/*_tmp.json
 evaluation/scripts/test_check3_debug.py
+
+scratch/

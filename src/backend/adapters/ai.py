@@ -82,68 +82,18 @@ class OpenAIAdapter:
         self.model = model
 
     def generate_with_citations(self, query: str, chunks: list) -> dict:
-        import re
-
-        # Build prompt with [chunk_id] inline
-        evidence_text = ""
-        for c in chunks:
-            chunk_id = c.get("doc_id", "unknown")
-            text = c.get("text", "")
-            evidence_text += f"Tài liệu [{chunk_id}]:\n{text}\n\n"
-
-        prompt = f"""Bạn là trợ lý AI chuyên về kỹ thuật phần mềm và kiến trúc đám mây. Nhiệm vụ của bạn là trả lời câu hỏi dựa trên các TÀI LIỆU được cung cấp.
-
-TÀI LIỆU (EVIDENCE):
-{evidence_text}
-
-QUY TẮC NGHIÊM NGẶT:
-1. CHỈ sử dụng thông tin từ TÀI LIỆU được cung cấp. Không sử dụng kiến thức bên ngoài, không tự bịa thông tin.
-2. Nếu TÀI LIỆU không chứa đủ thông tin để trả lời, hãy nói rõ: "Tôi không tìm thấy đủ thông tin trong tài liệu."
-3. Mọi câu khẳng định (claim) PHẢI kèm theo trích dẫn dạng [chunk_id] tương ứng với nguồn tài liệu.
-4. Đặt trích dẫn ngay sau câu hoặc ý được trích xuất từ tài liệu (VD: S3 Glacier có giá $0.004 [sha256:123abc...].).
-5. Chỉ trích dẫn các tài liệu thực sự hỗ trợ cho câu khẳng định đó.
-6. Trả lời bằng tiếng Việt, ngắn gọn, súc tích và dễ hiểu.
-
-CÂU HỎI:
-{query}
-"""
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful technical assistant. Always answer in Vietnamese and strictly follow the citation rules."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.0,
-                max_tokens=1024
-            )
-            answer = response.choices[0].message.content
-        except Exception as e:
-            print(f"Error calling LLM: {e}")
-            answer = f"Lỗi khi gọi mô hình: {e}"
-
-        # Parse citations from answer using regex: looking for [chunk_id]
-        # We find all [something] and see if it's in our chunks
-        cited_ids = []
-        matches = re.findall(r"\[(.*?)\]", answer)
-        for match in matches:
-            cited_ids.append(match)
-
-        # Build citation list (matching the expected format)
-        citations = []
-        unique_cited = set(cited_ids)
-        for c in chunks:
-            cid = c.get("doc_id", "")
-            if cid in unique_cited:
-                citations.append({
-                    "citation_id": cid,
-                    "chunk_id": cid,
-                    "document_name": c.get("metadata", {}).get("filename", "Unknown"),
-                    "text": c.get("text", "")
-                })
-
+        from src.backend.generation import generate_answer
+        
+        evidence_list = [
+            {
+                "chunk_id": c.get("doc_id") or c.get("chunk_id"),
+                "text": c.get("text", ""),
+                "document_name": c.get("metadata", {}).get("filename", "Unknown") if "metadata" in c else c.get("document_name", "Unknown"),
+            }
+            for c in chunks
+        ]
+        result = generate_answer(query, evidence_list)
         return {
-            "answer": answer,
-            "citations": citations
+            "answer": result.get("answer", ""),
+            "citations": result.get("citations", []),
         }

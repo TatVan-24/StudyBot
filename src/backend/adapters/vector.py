@@ -98,7 +98,7 @@ class LocalVector:
         print(f"[M6] Ingesting document: {doc_id} (user={user_id}, session={session_id})")
 
         # 1. Parse raw text into blocks using M1 TXT Parser
-        from parser.text.txt_parser import build_blocks, to_parsed_blocks
+        from src.parser.text.txt_parser import build_blocks, to_parsed_blocks
 
         lines = []
         for line_number, raw_line in enumerate(text.splitlines(), start=1):
@@ -199,3 +199,7 @@ class LocalVector:
             })
 
         return results
+
+    def delete_doc(self, doc_id: str):
+        if hasattr(self, "vector_store") and hasattr(self.vector_store, "delete_doc"):
+            self.vector_store.delete_doc(doc_id)

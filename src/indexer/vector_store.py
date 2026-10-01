@@ -172,3 +172,8 @@ class SQLiteVectorStore:
                 ))
 
             return results
+
+    def delete_doc(self, doc_id: str):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM embeddings WHERE document_id = ?", (doc_id,))
+            conn.commit()
