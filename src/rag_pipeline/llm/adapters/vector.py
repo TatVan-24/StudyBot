@@ -75,13 +75,13 @@ class LocalVector:
         self.model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-mpnet-base-v2')
 
         # Load Vector Store — isolated to m6_index.db (NEVER touch m3_index.db)
-        from src.indexer.vector_store import SQLiteVectorStore
+        from src.rag_pipeline.indexer.vector_store import SQLiteVectorStore
         os.makedirs("_data", exist_ok=True)
         self.vector_store = SQLiteVectorStore(db_path="_data/m6_index.db")
 
         # StructureAwareChunker inherits BaseChunker.__init__(tokenizer=None)
         # max_tokens is NOT a constructor arg — it is passed via config dict at .chunk() call time
-        from src.chunker.chunker import StructureAwareChunker
+        from src.rag_pipeline.chunker.chunker import StructureAwareChunker
         self.chunker = StructureAwareChunker()
 
         elapsed = time.time() - start_time
@@ -98,7 +98,7 @@ class LocalVector:
         print(f"[M6] Ingesting document: {doc_id} (user={user_id}, session={session_id})")
 
         # 1. Parse raw text into blocks using M1 TXT Parser
-        from src.parser.text.txt_parser import build_blocks, to_parsed_blocks
+        from src.rag_pipeline.parser.text.txt_parser import build_blocks, to_parsed_blocks
 
         lines = []
         for line_number, raw_line in enumerate(text.splitlines(), start=1):
@@ -143,7 +143,7 @@ class LocalVector:
         )
 
         # 5. Persist to m6_index.db (NEVER overwrites m3_index.db)
-        from src.indexer.schema import IndexMeta
+        from src.rag_pipeline.indexer.schema import IndexMeta
         from datetime import datetime, timezone
 
         meta = IndexMeta(

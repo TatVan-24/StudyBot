@@ -1,5 +1,5 @@
 import pytest
-from src.chunker import get_chunker, ChunkerStrategy, ChunkValidator, Chunk
+from src.rag_pipeline.chunker import get_chunker, ChunkerStrategy, ChunkValidator, Chunk
 
 
 @pytest.fixture

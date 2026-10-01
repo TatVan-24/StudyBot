@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
 
-from src.backend.adapters import factory
+from src.rag_pipeline.llm.adapters import factory
 from src.backend import handlers
 
 

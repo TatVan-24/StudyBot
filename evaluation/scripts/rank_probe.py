@@ -16,7 +16,7 @@ from datetime import datetime
 
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from src.indexer.embedding import EmbeddingEngine
+from src.rag_pipeline.indexer.embedding import EmbeddingEngine
 
 INDEX_PATH   = "d:/Personal Project/AWS StudyBot/evaluation/index/m3_index.db"
 TARGET_CHUNK = "sha256:57d9ec5ae0af2744"

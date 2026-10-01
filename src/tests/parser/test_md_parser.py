@@ -1,5 +1,5 @@
 import pytest
-from src.parser.markdown.md_parser import parse_md
+from src.rag_pipeline.parser.markdown.md_parser import parse_md
 
 def test_md_parser_wiki_06(tmp_path):
     output_dir = tmp_path / "bundle_md"

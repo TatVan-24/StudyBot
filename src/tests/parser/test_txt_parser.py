@@ -1,7 +1,7 @@
 import subprocess
 import sys
 from pathlib import Path
-from src.parser.text.txt_parser import read_lines, detect_line, build_blocks, to_parsed_blocks, parse_txt
+from src.rag_pipeline.parser.text.txt_parser import read_lines, detect_line, build_blocks, to_parsed_blocks, parse_txt
 
 
 def test_read_lines_preserves_line_numbers_and_blank_lines(tmp_path):

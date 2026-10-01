@@ -4,7 +4,7 @@ from pathlib import Path
 # Fix path to allow importing src
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
-from src.backend.validators import get_nli_classifier
+from src.rag_pipeline.llm.validators import get_nli_classifier
 
 def main():
     print("=== TEST CHECK 3 NLI TRUNCATION BEHAVIOR ===")

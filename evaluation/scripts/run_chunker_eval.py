@@ -24,8 +24,8 @@ except ImportError:
     Draft202012Validator = None
 
 try:
-    from src.chunker import get_chunker, ChunkerStrategy, ChunkValidator
-    from src.chunker.chunker import _tiktoken_available
+    from src.rag_pipeline.chunker import get_chunker, ChunkerStrategy, ChunkValidator
+    from src.rag_pipeline.chunker.chunker import _tiktoken_available
 except ImportError:
     # pyrefly: ignore [missing-import]
     from chunker import get_chunker, ChunkerStrategy, ChunkValidator
@@ -473,7 +473,7 @@ def main():
         doc_groups[b.get("document_id", "doc_unknown")].append(b)
 
     # Aggregate bundles and stats across all docs
-    from src.chunker.schema import ChunkBundle as _ChunkBundle
+    from src.rag_pipeline.chunker.schema import ChunkBundle as _ChunkBundle
 
     def run_all_docs(strategy_enum, cfg):
         agg_stats_list = []

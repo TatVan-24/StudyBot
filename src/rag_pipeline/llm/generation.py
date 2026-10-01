@@ -83,7 +83,7 @@ def format_evidence(evidence_list: List[Dict[str, Any]]) -> tuple[str, List[Dict
 
     return evidence_text, citations
 
-from src.backend.model_rotator import call_with_rotation
+from src.rag_pipeline.llm.model_rotator import call_with_rotation
 
 def generate_answer(query: str, evidence_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     """

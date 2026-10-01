@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.backend.config import config
-from src.backend.adapters import factory
+from src.rag_pipeline.llm.adapters import factory
 from src.backend import handlers
 
 

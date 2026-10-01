@@ -82,7 +82,7 @@ class OpenAIAdapter:
         self.model = model
 
     def generate_with_citations(self, query: str, chunks: list) -> dict:
-        from src.backend.generation import generate_answer
+        from src.rag_pipeline.llm.generation import generate_answer
         
         evidence_list = [
             {
