@@ -85,6 +85,11 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Build artifacts
+.build/
+*.zip
+_data/
+
 # IDE and operating-system files
 .idea/
 .vscode/
@@ -130,3 +135,6 @@ evaluation/results/*_tmp.json
 evaluation/scripts/test_check3_debug.py
 
 scratch/
+/.github/
+./infracstructure/
+.env
