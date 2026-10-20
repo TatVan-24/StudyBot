@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from src.backend.config import config
 from src.rag_pipeline.llm.adapters import factory
-from src.backend import handlers
+from src.rag_pipeline.llm import handlers
 
 
 app = FastAPI(title="StudyBot")

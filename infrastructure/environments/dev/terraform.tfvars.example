@@ -1,0 +1,6 @@
+region               = "ap-southeast-2"
+project              = "studybot"
+environment          = "dev"
+frontend_bucket_name = "studybot-dev-frontend-<your-account-id>"
+document_bucket_name = "studybot-dev-document-<your-account-id>"
+cors_allowed_origins = ["*"]

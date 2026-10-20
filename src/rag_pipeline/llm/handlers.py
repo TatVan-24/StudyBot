@@ -257,8 +257,8 @@ def handle_query(
     Input contract:  { session_id, user_id, query }
     Output contract: { session_id, user_id, metadata: { status, answer, ... } }
     """
-    from src.backend import validators
-    from src.backend import refusal as refusal_mod
+    from src.rag_pipeline.llm import validators
+    from src.rag_pipeline.llm import refusal as refusal_mod
 
     t0 = time.time()
 

@@ -14,21 +14,27 @@ logger = logging.getLogger("model_rotator")
 # ── MODEL REGISTRY (Free Plan Limits from Provider) ─────────────────────────
 MODEL_REGISTRY: List[Dict[str, Any]] = [
     {
-        "name": os.getenv("OPENAI_MODEL", "openai/gpt-oss-120b"),
+        "name": "openai/gpt-oss-120b",
         "rpm_limit": 30,
         "tpm_limit": 8000,
+        "rpd_limit": 1000,
+        "tpd_limit": 200000,
         "priority": 1,
     },
     {
         "name": "openai/gpt-oss-20b",
         "rpm_limit": 30,
         "tpm_limit": 8000,
+        "rpd_limit": 1000,
+        "tpd_limit": 200000,
         "priority": 2,
     },
     {
-        "name": "canopylabs/orpheus-v1-english",
-        "rpm_limit": 10,
-        "tpm_limit": 1200,
+        "name": "qwen/qwen3.8-27b",
+        "rpm_limit": 30,
+        "tpm_limit": 8000,
+        "rpd_limit": 1000,
+        "tpd_limit": 200000,
         "priority": 3,
     },
 ]
@@ -36,44 +42,59 @@ MODEL_REGISTRY: List[Dict[str, Any]] = [
 
 # ── QUOTA TRACKER ────────────────────────────────────────────────────────────
 class QuotaTracker:
-    def __init__(self, model_name: str, limit: int):
+    def __init__(self, model_name: str, rpm_limit: int, rpd_limit: int = 1000):
         self.model_name = model_name
-        self.limit = limit
-        self.count = limit
-        self.reset_at = time.time() + 60
+        self.rpm_limit = rpm_limit
+        self.rpd_limit = rpd_limit
+        self.rpm_count = rpm_limit
+        self.rpd_count = rpd_limit
+        self.minute_reset_at = time.time() + 60
+        self.day_reset_at = time.time() + 86400
         self.lock = Lock()
 
     def _maybe_reset(self):
-        if time.time() >= self.reset_at:
-            self.count = self.limit
-            self.reset_at = time.time() + 60
+        now = time.time()
+        if now >= self.minute_reset_at:
+            self.rpm_count = self.rpm_limit
+            self.minute_reset_at = now + 60
+        if now >= self.day_reset_at:
+            self.rpd_count = self.rpd_limit
+            self.day_reset_at = now + 86400
 
     def consume(self, amount: int = 1) -> int:
         with self.lock:
             self._maybe_reset()
-            self.count = max(0, self.count - amount)
-            return self.count
+            self.rpm_count = max(0, self.rpm_count - amount)
+            self.rpd_count = max(0, self.rpd_count - amount)
+            return self.rpm_count
 
-    def remaining(self) -> int:
+    def remaining_rpm(self) -> int:
         with self.lock:
             self._maybe_reset()
-            return self.count
+            return self.rpm_count
 
-    def is_low(self, threshold: int = 5) -> bool:
-        return self.remaining() < threshold
-
-    def reset(self):
+    def remaining_rpd(self) -> int:
         with self.lock:
-            self.count = self.limit
-            self.reset_at = time.time() + 60
+            self._maybe_reset()
+            return self.rpd_count
+
+    def is_low(self, threshold: int = 3) -> bool:
+        with self.lock:
+            self._maybe_reset()
+            return self.rpm_count < threshold or self.rpd_count <= 0
+
+    def mark_exhausted(self):
+        with self.lock:
+            self.rpm_count = 0
+            self.minute_reset_at = time.time() + 60
 
 
 _trackers: Dict[str, QuotaTracker] = {}
 
 
-def _get_tracker(model_name: str, limit: int) -> QuotaTracker:
+def _get_tracker(model_name: str, rpm_limit: int, rpd_limit: int) -> QuotaTracker:
     if model_name not in _trackers:
-        _trackers[model_name] = QuotaTracker(model_name, limit)
+        _trackers[model_name] = QuotaTracker(model_name, rpm_limit, rpd_limit)
     return _trackers[model_name]
 
 
@@ -95,7 +116,7 @@ def log_model_call(model_name: str, attempt: int, latency_ms: int, status: str):
 
 
 # ── MODEL PICKER ─────────────────────────────────────────────────────────────
-def pick_model(current_model_name: Optional[str] = None, threshold: int = 5) -> Dict[str, Any]:
+def pick_model(current_model_name: Optional[str] = None, threshold: int = 3) -> Dict[str, Any]:
     """
     Trả về model khả dụng tiếp theo.
     - Nếu model hiện tại còn count >= threshold -> giữ nguyên.
@@ -107,20 +128,18 @@ def pick_model(current_model_name: Optional[str] = None, threshold: int = 5) -> 
             None,
         )
         if current is not None:
-            limit = current.get("rpm_limit", 30)
-            tracker = _get_tracker(current_model_name, limit)
+            tracker = _get_tracker(current_model_name, current["rpm_limit"], current.get("rpd_limit", 1000))
             if not tracker.is_low(threshold):
                 return current
             
             log_model_event(
                 event="rotate",
                 from_model=current_model_name,
-                reason=f"count={tracker.remaining()} < {threshold}",
+                reason=f"rpm={tracker.remaining_rpm()}, rpd={tracker.remaining_rpd()} < threshold={threshold}",
             )
 
     for model in sorted(MODEL_REGISTRY, key=lambda m: m["priority"]):
-        limit = model.get("rpm_limit", 30)
-        tracker = _get_tracker(model["name"], limit)
+        tracker = _get_tracker(model["name"], model["rpm_limit"], model.get("rpd_limit", 1000))
         if not tracker.is_low(threshold):
             return model
 
@@ -155,14 +174,15 @@ def call_with_rotation(
         model_name = model_info["name"]
         current_model_name = model_name
 
-        limit = model_info.get("rpm_limit", 30)
-        tracker = _get_tracker(model_name, limit)
+        rpm_limit = model_info.get("rpm_limit", 30)
+        rpd_limit = model_info.get("rpd_limit", 1000)
+        tracker = _get_tracker(model_name, rpm_limit, rpd_limit)
         tracker.consume()
 
         log_model_event(
             event="call",
             to_model=model_name,
-            reason=f"attempt={attempt}, remaining={tracker.remaining()}",
+            reason=f"attempt={attempt}, remaining_rpm={tracker.remaining_rpm()}, remaining_rpd={tracker.remaining_rpd()}",
         )
 
         start = time.time()
@@ -182,14 +202,14 @@ def call_with_rotation(
             latency_ms = int((time.time() - start) * 1000)
             err = str(e)
 
-            if "429" in err or "rate limit" in err.lower() or "quota" in err.lower():
-                log_model_call(model_name, attempt, latency_ms, "429")
+            if "429" in err or "404" in err or "rate limit" in err.lower() or "quota" in err.lower() or "model_not_found" in err.lower():
+                log_model_call(model_name, attempt, latency_ms, "429/404")
                 log_model_event(
-                    event="429",
+                    event="rotate_error",
                     from_model=model_name,
                     reason=err[:120],
                 )
-                tracker.reset()
+                tracker.mark_exhausted()
                 current_model_name = None
                 time.sleep(1.0)
                 continue
