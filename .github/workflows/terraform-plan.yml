@@ -74,7 +74,11 @@ jobs:
       - name: Terraform Plan
         working-directory: ./infrastructure/environments/dev
         # Thêm -out=tfplan để lưu lại kết quả
-        run: terraform plan -no-color -out=tfplan
+        env:
+          # Lấy giá trị từ tab Variables trên GitHub
+          TF_VAR_document_bucket_name: ${{ vars.TF_VAR_document_bucket_name }}
+          TF_VAR_frontend_bucket_name: ${{ vars.TF_VAR_frontend_bucket_name }}
+        run: terraform plan -input=false -no-color -out=tfplan
 
       # Lưu lại bản Plan (Bạn có thể tải file này về xem trên GitHub)
       - name: Upload Terraform Plan
