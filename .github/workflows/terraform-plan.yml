@@ -1,23 +1,56 @@
 name: Terraform Plan
 
 on:
+  # 1. Chạy khi push lên BẤT KỲ nhánh nào (trừ main)
   push:
-    branches: [ "main" ]
+    branches:
+      - "**"
+      - "!main"
+  # 2. Chạy khi có PR đổ về main
   pull_request:
     branches: [ "main" ]
 
+# Giới hạn quyền tối thiểu cho bảo mật
+permissions:
+  contents: read
+
+# Tự hủy các lần chạy cũ nếu bạn push liên tục (tiết kiệm tiền)
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  terraform:
-    name: "Terraform Plan"
+  # --- JOB 1: KIỂM TRA XEM CÓ SỬA FILE HẠ TẦNG KHÔNG ---
+  changes:
+    name: Detect changes
     runs-on: ubuntu-latest
-
-
-        # Trả lời câu hỏi: Làm những gì? (Theo thứ tự từ trên xuống dưới)
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
     steps:
-      # Bước 1: Phải có code đã, tải code từ repo GitHub về máy ảo
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            terraform:
+              - 'infrastructure/**'
+
+  # --- JOB 2: CHẠY TERRAFORM PLAN ---
+  terraform-plan:
+    name: Run Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [changes]
+    # Chỉ chạy nếu Job 1 báo có sửa file trong thư mục infrastructure
+    if: needs.changes.outputs.terraform == 'true'
+
+    steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # Bắt buộc phải có AWS credentials trước khi Init (để đọc file state trên S3)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -25,23 +58,28 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-2    
 
-      # Bước 2: Máy ảo không có sẵn Terraform, phải cài nó
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           "terraform_version": "1.16.4"
 
-      # Bước 3: Khai báo thư mục chứa code hạ tầng của bạn
       - name: Terraform Init
         working-directory: ./infrastructure/environments/dev
         run: terraform init
 
-      # Bước 4: Kiểm tra code viết có lỗi cú pháp không
       - name: Terraform Validate
         working-directory: ./infrastructure/environments/dev
         run: terraform validate
 
-      # Bước 5: Chạy thử xem có thay đổi gì không
       - name: Terraform Plan
         working-directory: ./infrastructure/environments/dev
-        run: terraform plan -no-color
+        # Thêm -out=tfplan để lưu lại kết quả
+        run: terraform plan -no-color -out=tfplan
+
+      # Lưu lại bản Plan (Bạn có thể tải file này về xem trên GitHub)
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-file
+          path: infrastructure/environments/dev/tfplan
+          if-no-files-found: error
