@@ -1,0 +1,47 @@
+name: Terraform Plan
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  terraform:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+
+
+        # Trả lời câu hỏi: Làm những gì? (Theo thứ tự từ trên xuống dưới)
+    steps:
+      # Bước 1: Phải có code đã, tải code từ repo GitHub về máy ảo
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2    
+
+      # Bước 2: Máy ảo không có sẵn Terraform, phải cài nó
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          "terraform_version": "1.16.4"
+
+      # Bước 3: Khai báo thư mục chứa code hạ tầng của bạn
+      - name: Terraform Init
+        working-directory: ./infrastructure/environments/dev
+        run: terraform init
+
+      # Bước 4: Kiểm tra code viết có lỗi cú pháp không
+      - name: Terraform Validate
+        working-directory: ./infrastructure/environments/dev
+        run: terraform validate
+
+      # Bước 5: Chạy thử xem có thay đổi gì không
+      - name: Terraform Plan
+        working-directory: ./infrastructure/environments/dev
+        run: terraform plan -no-color
