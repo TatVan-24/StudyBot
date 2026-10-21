@@ -78,6 +78,7 @@ jobs:
           # Lấy giá trị từ tab Variables trên GitHub
           TF_VAR_document_bucket_name: ${{ vars.TF_VAR_document_bucket_name }}
           TF_VAR_frontend_bucket_name: ${{ vars.TF_VAR_frontend_bucket_name }}
+          TF_VAR_alert_email: ${{ vars.TF_VAR_alert_email }}
         run: terraform plan -input=false -no-color -out=tfplan
 
       # Lưu lại bản Plan (Bạn có thể tải file này về xem trên GitHub)
