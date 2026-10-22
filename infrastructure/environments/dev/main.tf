@@ -47,7 +47,7 @@ module "auth" {
 module "compute" {
   source = "../../modules/compute"
 
-  account_id  = data.aws_caller_identity.current.account_id
+  account_id = data.aws_caller_identity.current.account_id
 
   table_jobs_name              = module.database.jobs_table_name
   table_documents_name         = module.database.documents_table_name
@@ -139,4 +139,20 @@ module "observability" {
     "${var.project}-${var.environment}-interactive-dlq",
     "${var.project}-${var.environment}-document-dlq"
   ]
+}
+
+
+
+# Tự động import các Log Group đã tồn tại trên AWS vào Terraform State
+import {
+  for_each = toset([
+    module.compute.ingestion_event_function_name,
+    module.compute.document_function_name,
+    module.compute.session_function_name,
+    module.compute.query_function_name,
+    module.compute.flashcard_function_name,
+    module.compute.job_function_name
+  ])
+  to = module.observability.aws_cloudwatch_log_group.lambda_log_groups[each.value]
+  id = "/aws/lambda/${each.value}"
 }
