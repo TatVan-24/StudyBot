@@ -107,10 +107,3 @@ resource "aws_budgets_budget" "cost_budget" {
     subscriber_email_addresses = [var.alert_email]
   }
 }
-
-# Tự động import các Log Group đã tồn tại trên AWS vào Terraform State
-import {
-  for_each = toset(var.lambda_function_names)
-  to       = aws_cloudwatch_log_group.lambda_log_groups[each.value]
-  id       = "/aws/lambda/${each.value}"
-}
