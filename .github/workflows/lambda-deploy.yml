@@ -1,11 +1,57 @@
-name: Lambda Deploy
+name: Deploy Lambda Code
 
 on:
-  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/lambdas/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lambda-deploy
+  cancel-in-progress: false
 
 jobs:
-  placeholder:
+  deploy:
+    name: Deploy Lambda Functions
     runs-on: ubuntu-latest
+
     steps:
-      - name: Placeholder
-        run: echo "Lambda Deploy workflow is not implemented yet."
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - name: Package and Deploy Lambdas
+        shell: bash
+        run: |
+          set -e
+
+          LAMBDAS="document session query flashcard job ingestion_event"
+
+          for lambda in $LAMBDAS; do
+            echo "========================================"
+            echo "Deploying $lambda"
+            echo "========================================"
+
+            cd src/lambdas
+
+            zip -r "../../${lambda}.zip" "${lambda}" common -q
+
+            cd ../..
+
+            aws lambda update-function-code \
+              --function-name "studybot-dev-${lambda}" \
+              --zip-file "fileb://${lambda}.zip"
+
+            rm "${lambda}.zip"
+
+            echo "Successfully deployed $lambda"
+          done

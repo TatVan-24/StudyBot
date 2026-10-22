@@ -17,6 +17,13 @@ resource "aws_lambda_function" "lambdas" {
   timeout          = var.lambda_timeout_seconds
   role             = aws_iam_role.lambda_roles[each.key].arn
 
+  lifecycle {
+    ignore_changes = [
+      filename,
+      source_code_hash
+    ]
+  }
+
   environment {
     variables = {
       TABLE_JOBS              = var.table_jobs_name
