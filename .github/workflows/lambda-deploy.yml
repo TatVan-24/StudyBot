@@ -1,0 +1,11 @@
+name: Lambda Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder
+        run: echo "Lambda Deploy workflow is not implemented yet."

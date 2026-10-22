@@ -1,0 +1,90 @@
+name: Terraform Plan
+
+on:
+  # 1. Chạy khi push lên BẤT KỲ nhánh nào (trừ main)
+  push:
+    branches:
+      - "**"
+      - "!main"
+  # 2. Chạy khi có PR đổ về main
+  pull_request:
+    branches: [ "main" ]
+
+# Giới hạn quyền tối thiểu cho bảo mật
+permissions:
+  contents: read
+
+# Tự hủy các lần chạy cũ nếu bạn push liên tục (tiết kiệm tiền)
+concurrency:
+  group: terraform-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # --- JOB 1: KIỂM TRA XEM CÓ SỬA FILE HẠ TẦNG KHÔNG ---
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      terraform: ${{ steps.filter.outputs.terraform }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            terraform:
+              - 'infrastructure/**'
+
+  # --- JOB 2: CHẠY TERRAFORM PLAN ---
+  terraform-plan:
+    name: Run Terraform Plan
+    runs-on: ubuntu-latest
+    needs: [changes]
+    # Chỉ chạy nếu Job 1 báo có sửa file trong thư mục infrastructure
+    if: needs.changes.outputs.terraform == 'true'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # Bắt buộc phải có AWS credentials trước khi Init (để đọc file state trên S3)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2    
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          "terraform_version": "1.16.4"
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/environments/dev
+        run: terraform init
+
+      - name: Terraform Validate
+        working-directory: ./infrastructure/environments/dev
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: ./infrastructure/environments/dev
+        # Thêm -out=tfplan để lưu lại kết quả
+        env:
+          # Lấy giá trị từ tab Variables trên GitHub
+          TF_VAR_document_bucket_name: ${{ vars.TF_VAR_document_bucket_name }}
+          TF_VAR_frontend_bucket_name: ${{ vars.TF_VAR_frontend_bucket_name }}
+          TF_VAR_alert_email: ${{ vars.TF_VAR_alert_email }}
+        run: terraform plan -input=false -no-color -out=tfplan
+
+      # Lưu lại bản Plan (Bạn có thể tải file này về xem trên GitHub)
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-file
+          path: infrastructure/environments/dev/tfplan
+          if-no-files-found: error
