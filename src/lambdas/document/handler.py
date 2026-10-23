@@ -47,18 +47,37 @@ def lambda_handler(event, context):
 # 1. POST /documents/uploads - Tạo S3 Presigned POST URL & Bản ghi PENDING
 def create_upload(event, user_id):
     body = {}
-    if event.get("body"):
-        try:
-            body = json.loads(event["body"])
-        except Exception:
-            body = {}
+    if not event.get("body"):
+        return error("Request body is required", 400)
+    try:
+        body = json.loads(event["body"])
+    except (json.JSONDecodeError, TypeError):
+        return error("Invalid JSON body", 400)
 
-    filename = body.get("filename", "document.pdf")
-    content_type = body.get("content_type", "application/pdf")
+    filename = body.get("filename")
+    if not filename or not filename.strip():
+        return error("Filename is required", 400)
+    if "/" in filename or "\\" in filename:
+        return error("Invalid filename", 400)
+    
+    content_type = body.get("content_type")
+    if not content_type:
+        return error("Content-Type is required", 400)
+
+    expected_content_types = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+    }
 
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         return error(f"Invalid file type '{ext}'. Allowed: .pdf, .txt, .md", 400)
+
+    expected_content_type = expected_content_types[ext]
+
+    if content_type != expected_content_type:
+        return error("Content-Type does not match file extension", 400)
 
     document_id = f"doc_{uuid.uuid4().hex[:12]}"
     s3_key = f"uploads/{user_id}/{document_id}/{filename}"
