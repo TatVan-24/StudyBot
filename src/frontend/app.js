@@ -171,69 +171,174 @@ async function processUploadQueue() {
 async function uploadFile(file) {
     const allowed = ['pdf', 'txt', 'md'];
     const ext = (file.name.split('.').pop() || '').toLowerCase();
-    if (!allowed.includes(ext)) return toast('Only PDF, TXT, and Markdown files are supported.', 'warn');
-    if (file.size > 10 * 1024 * 1024) return toast('File is larger than 10 MB.', 'warn');
+
+    if (!allowed.includes(ext)) {
+        return toast('Only PDF, TXT, and Markdown files are supported.', 'warn');
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+        return toast('File is larger than 10 MB.', 'warn');
+    }
+
+    const contentTypes = {
+        pdf: 'application/pdf',
+        txt: 'text/plain',
+        md: 'text/markdown',
+    };
+
+    const contentType = contentTypes[ext];
 
     const chipId = 'chip-' + Date.now();
     const chips = $('upload-chips');
-    if(chips) chips.insertAdjacentHTML('beforeend', `
-        <div id="${chipId}" class="upload-chip uploading">
-            <i class="spinner"></i>
-            <span>${escapeHtml(file.name)} — indexing…</span>
-        </div>
-    `);
 
-    const form = new FormData();
-    form.append('file', file);
-    if (currentSessionId) {
-        form.append('session_id', currentSessionId);
+    if (chips) {
+        chips.insertAdjacentHTML('beforeend', `
+            <div id="${chipId}" class="upload-chip uploading">
+                <i class="spinner"></i>
+                <span>${escapeHtml(file.name)} — uploading…</span>
+            </div>
+        `);
     }
 
-    const result = await apiCall('/upload', { method: 'POST', body: form });
+    try {
+        // ------------------------------------------------------------
+        // Step 1: Ask API Gateway/Lambda for a presigned S3 POST
+        // ------------------------------------------------------------
+        const prepareResult = await apiCall('/documents/uploads', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                filename: file.name,
+                content_type: contentType,
+            }),
+        });
 
-    const chip = document.getElementById(chipId);
-    if (!result.ok) {
-        if(chip) {
-            chip.className = 'upload-chip error';
-            chip.innerHTML = `<span>❌ ${escapeHtml(file.name)} — failed</span><button class="close" onclick="this.parentElement.remove()">×</button>`;
-        }
-        const detail = (result.body && result.body.detail) || 'Upload failed.';
-        if (detail.toLowerCase().includes('10') || detail.toLowerCase().includes('full') || detail.toLowerCase().includes('limit')) {
-            toast('Session đã đầy 10 docs. Click "+ New Chat" để tạo session mới.', 'warn');
-        } else if (detail.toLowerCase().includes('session')) {
-            clearSessionId();
-            toast('Session không tồn tại. Đã reset. Vui lòng upload lại.', 'error');
-        } else {
+        const chip = document.getElementById(chipId);
+
+        if (!prepareResult.ok) {
+            if (chip) {
+                chip.className = 'upload-chip error';
+                chip.innerHTML = `
+                    <span>❌ ${escapeHtml(file.name)} — failed</span>
+                    <button class="close" onclick="this.parentElement.remove()">×</button>
+                `;
+            }
+
+            const detail =
+                (prepareResult.body && (
+                    prepareResult.body.error ||
+                    prepareResult.body.detail
+                )) ||
+                'Failed to prepare upload.';
+
             toast(detail, 'error');
+            return false;
         }
+
+        const uploadInfo = prepareResult.body;
+
+        // ------------------------------------------------------------
+        // Step 2: Upload the actual file directly to S3
+        // ------------------------------------------------------------
+        const s3Form = new FormData();
+
+        Object.entries(uploadInfo.fields || {}).forEach(([key, value]) => {
+            s3Form.append(key, value);
+        });
+
+        s3Form.append('file', file);
+
+        if (chip) {
+            chip.innerHTML = `
+                <i class="spinner"></i>
+                <span>${escapeHtml(file.name)} — uploading to S3…</span>
+            `;
+        }
+
+        const s3Response = await fetch(uploadInfo.upload_url, {
+            method: 'POST',
+            body: s3Form,
+        });
+
+        if (!s3Response.ok) {
+            if (chip) {
+                chip.className = 'upload-chip error';
+                chip.innerHTML = `
+                    <span>❌ ${escapeHtml(file.name)} — S3 upload failed</span>
+                    <button class="close" onclick="this.parentElement.remove()">×</button>
+                `;
+            }
+
+            toast('File upload to S3 failed.', 'error');
+            return false;
+        }
+
+        // ------------------------------------------------------------
+        // Step 3: Poll document lifecycle
+        // ------------------------------------------------------------
+        const documentId = uploadInfo.document_id;
+
+        if (chip) {
+            chip.innerHTML = `
+                <i class="spinner"></i>
+                <span>${escapeHtml(file.name)} — processing…</span>
+            `;
+        }
+
+        const finalDocument = await pollDocumentStatus(documentId, chipId);
+
+        if (!finalDocument) {
+            return false;
+        }
+
+        if (finalDocument.status === 'ACTIVE') {
+            if (chip) {
+                chip.className = 'upload-chip success';
+                chip.innerHTML = `
+                    <span>✓ ${escapeHtml(file.name)} — ready</span>
+                    <button class="close" onclick="this.parentElement.remove()">×</button>
+                `;
+            }
+
+            toast(`${file.name} is ready.`, 'success');
+
+            fileInput.value = '';
+            refreshDocuments();
+            loadSessions();
+
+            return true;
+        }
+
+        // FAILED
+        if (chip) {
+            chip.className = 'upload-chip error';
+            chip.innerHTML = `
+                <span>❌ ${escapeHtml(file.name)} — processing failed</span>
+                <button class="close" onclick="this.parentElement.remove()">×</button>
+            `;
+        }
+
+        toast(`${file.name} processing failed.`, 'error');
+        return false;
+
+    } catch (err) {
+        console.error('Upload failed:', err);
+
+        const chip = document.getElementById(chipId);
+
+        if (chip) {
+            chip.className = 'upload-chip error';
+            chip.innerHTML = `
+                <span>❌ ${escapeHtml(file.name)} — failed</span>
+                <button class="close" onclick="this.parentElement.remove()">×</button>
+            `;
+        }
+
+        toast('Upload failed. Please try again.', 'error');
         return false;
     }
-
-    const item = result.body;
-    if (item.session_id) {
-        const wasNewSession = !currentSessionId;
-        saveSessionId(item.session_id);
-        if (wasNewSession) toast(`Session mới tạo: ${item.filename}`, 'success');
-    }
-
-    if(chip) {
-        chip.className = 'upload-chip success';
-        chip.innerHTML = `
-            <span>✓ ${escapeHtml(item.filename)} · ${Number(item.chars_extracted || 0).toLocaleString()} chars</span>
-            <button class="close" onclick="this.parentElement.remove()">×</button>
-        `;
-    }
-
-    if (currentSessionId && item.session_id === currentSessionId) {
-        toast(`${item.filename} added to current session.`, 'success');
-    } else {
-        toast(`${item.filename} added.`, 'success');
-    }
-
-    fileInput.value = '';
-    refreshDocuments();
-    loadSessions();
-    return true;
 }
 
 function renderAnswer(text) {
@@ -610,6 +715,129 @@ async function deleteSession(sessionId, event) {
     }
 
     loadSessions();
+}
+
+async function pollDocumentStatus(documentId, chipId) {
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_WAIT_MS = 5 * 60 * 1000;
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < MAX_WAIT_MS) {
+        try {
+            const result = await apiCall(`/documents/${encodeURIComponent(documentId)}`, {
+                method: 'GET',
+            });
+
+            const chip = document.getElementById(chipId);
+
+            if (!result.ok) {
+                console.error(
+                    'Failed to get document status:',
+                    result.status,
+                    result.body
+                );
+
+                if (chip) {
+                    chip.className = 'upload-chip error';
+                    chip.innerHTML = `
+                        <span>❌ Failed to check ${escapeHtml(documentId)}</span>
+                        <button class="close" onclick="this.parentElement.remove()">×</button>
+                    `;
+                }
+
+                toast('Failed to check document status.', 'error');
+                return null;
+            }
+
+            const document = result.body && result.body.document;
+
+            if (!document) {
+                console.error('Document response missing document:', result.body);
+                toast('Invalid document status response.', 'error');
+                return null;
+            }
+
+            const status = document.status;
+
+            // --------------------------------------------------------
+            // Terminal state: ingestion succeeded
+            // --------------------------------------------------------
+            if (status === 'ACTIVE') {
+                return document;
+            }
+
+            // --------------------------------------------------------
+            // Terminal state: ingestion failed
+            // --------------------------------------------------------
+            if (status === 'FAILED') {
+                console.error('Document processing failed:', document);
+
+                return document;
+            }
+
+            // --------------------------------------------------------
+            // Non-terminal states
+            // --------------------------------------------------------
+            if (
+                status === 'UPLOADING' ||
+                status === 'INGEST_QUEUED' ||
+                status === 'PROCESSING'
+            ) {
+                if (chip) {
+                    const statusText = {
+                        UPLOADING: 'uploading…',
+                        INGEST_QUEUED: 'queued for processing…',
+                        PROCESSING: 'processing…',
+                    }[status];
+
+                    chip.innerHTML = `
+                        <i class="spinner"></i>
+                        <span>${escapeHtml(document.filename)} — ${statusText}</span>
+                    `;
+                }
+
+                await new Promise(resolve =>
+                    setTimeout(resolve, POLL_INTERVAL_MS)
+                );
+
+                continue;
+            }
+
+            // --------------------------------------------------------
+            // Unknown state
+            // --------------------------------------------------------
+            console.error('Unknown document status:', status);
+            toast(`Unknown document status: ${status}`, 'error');
+            return null;
+
+        } catch (err) {
+            console.error('Error polling document status:', err);
+            toast('Failed to check document status.', 'error');
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Timeout
+    // ------------------------------------------------------------
+    console.error(
+        `Document ${documentId} did not become terminal within 5 minutes.`
+    );
+
+    const chip = document.getElementById(chipId);
+
+    if (chip) {
+        chip.className = 'upload-chip error';
+        chip.innerHTML = `
+            <span>⚠ ${escapeHtml(documentId)} — processing timeout</span>
+            <button class="close" onclick="this.parentElement.remove()">×</button>
+        `;
+    }
+
+    toast('Document processing is taking too long.', 'warn');
+
+    return null;
 }
 
 restoreSession();

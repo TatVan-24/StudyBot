@@ -66,3 +66,7 @@ output "alarm_names" {
   description = "List of CloudWatch alarms created"
   value       = module.observability.alarm_names
 }
+
+output "auth_domain" {
+  value = module.auth.domain
+}

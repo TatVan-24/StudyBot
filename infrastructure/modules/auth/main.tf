@@ -19,7 +19,13 @@ resource "aws_cognito_user_pool" "main" {
   }
 }
 
-# 2. Cognito User Pool Client
+# 2. Cognito Hosted UI Domain
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = "${var.project}-${var.environment}"
+  user_pool_id = aws_cognito_user_pool.main.id
+}
+
+# 3. Cognito User Pool Client
 resource "aws_cognito_user_pool_client" "main" {
   name         = "${var.project}-${var.environment}-client"
   user_pool_id = aws_cognito_user_pool.main.id

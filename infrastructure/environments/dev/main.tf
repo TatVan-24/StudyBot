@@ -38,10 +38,17 @@ module "messaging" {
 }
 
 module "auth" {
-  source = "../../modules/auth"
-
+  source      = "../../modules/auth"
   project     = var.project
   environment = var.environment
+
+  callback_urls = [
+    "https://${module.frontend.distribution_domain_name}"
+  ]
+
+  logout_urls = [
+    "https://${module.frontend.distribution_domain_name}"
+  ]
 }
 
 module "compute" {
