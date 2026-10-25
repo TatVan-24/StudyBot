@@ -1,4 +1,12 @@
 const API_BASE=(window.API_BASE||new URLSearchParams(location.search).get('api')||'').replace(/\/$/,'');
+
+const COGNITO_CONFIG = {
+    domain: window.STUDYBOT_CONFIG.cognitoDomain,
+    clientId: window.STUDYBOT_CONFIG.clientId,
+    redirectUri: window.location.origin,
+    scope: 'openid email profile'
+};
+
 let authMode='login';
 let activeUser=null;
 const $=id=>document.getElementById(id);

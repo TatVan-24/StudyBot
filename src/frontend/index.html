@@ -13,49 +13,59 @@
 <body>
   <div id="auth-view" class="auth-view">
     <div class="auth-overlay"></div>
+
     <section class="auth-shell" aria-label="StudyBot authentication">
-      <div class="auth-story"><a class="brand brand-light" href="#"><span
-            class="brand-mark">S</span><span>Study<span>Bot</span></span></a>
-        <div><span class="eyebrow">Your personal AI study coach</span>
+
+      <div class="auth-story">
+        <a class="brand brand-light" href="#">
+          <span class="brand-mark">S</span>
+          <span>Study<span>Bot</span></span>
+        </a>
+
+        <div>
+          <span class="eyebrow">Your personal AI study coach</span>
           <h1>Turn your notes into knowledge that sticks.</h1>
-          <p>Upload lectures, ask grounded questions, and build a study routine around your own material.</p>
+          <p>
+            Upload lectures, ask grounded questions, and build a study
+            routine around your own material.
+          </p>
         </div>
-        <div class="auth-features"><span>Grounded answers</span><span>Source citations</span><span>Private
-            workspace</span></div>
+
+        <div class="auth-features">
+          <span>Grounded answers</span>
+          <span>Source citations</span>
+          <span>Private workspace</span>
+        </div>
       </div>
+
       <div class="auth-card">
-        <div class="auth-card-heading">
-          <div class="mobile-brand"><span class="brand-mark">S</span> Study<span>Bot</span></div>
-          <h2 id="auth-title">Welcome back</h2>
-          <p id="auth-subtitle">Sign in to continue your learning journey.</p>
-        </div>
-        <div class="auth-tabs" role="tablist"><button id="login-tab" class="auth-tab active" type="button"
-            onclick="setAuthMode('login')">Log in</button><button id="register-tab" class="auth-tab" type="button"
-            onclick="setAuthMode('register')">Register</button></div>
-        <div id="auth-message" class="form-message" role="alert"></div>
-        <form id="auth-form" onsubmit="submitAuth(event)">
-          <label id="name-field" class="field hidden"><span>Full name</span><input id="auth-name" type="text"
-              autocomplete="name" placeholder="Alex Morgan"></label>
-          <label class="field"><span>Email address</span><input id="auth-email" type="email" autocomplete="email"
-              placeholder="you@example.com" required></label>
-          <label class="field"><span>Password</span><span class="password-wrap"><input id="auth-password"
-                type="password" autocomplete="current-password" placeholder="At least 8 characters" minlength="8"
-                required><button class="password-toggle" type="button"
-                onclick="togglePassword()">Show</button></span></label>
-          <label id="confirm-field" class="field hidden"><span>Confirm password</span><input id="auth-confirm"
-              type="password" autocomplete="new-password" placeholder="Repeat your password" minlength="8"></label>
-          <div id="login-options" class="form-options"><label class="check"><input id="remember-me" type="checkbox"
-                checked> Remember me</label><button class="text-button" type="button"
-              onclick="showAuthMessage('Password recovery will be connected with Cognito later.', 'info')">Forgot
-              password?</button></div>
-          <button id="auth-submit" class="button button-primary button-wide" type="submit">Log in</button><button
-            id="demo-login" class="button button-secondary button-wide" type="button" onclick="demoLogin()">Continue
-            with demo account</button>
-        </form>
-        <p class="auth-note">Local preview only. Production authentication will use Amazon Cognito.</p>
-      </div>
-    </section>
+  <div class="auth-card-heading">
+    <div class="mobile-brand">
+      <span class="brand-mark">S</span> Study<span>Bot</span>
+    </div>
+
+    <h2 id="auth-title">Welcome back</h2>
+    <p id="auth-subtitle">
+      Sign in to continue your learning journey.
+    </p>
   </div>
+
+  <div id="auth-message" class="form-message" role="alert"></div>
+
+  <!-- NÚT MỚI: Ngắn gọn, có icon, không bị xuống dòng -->
+  <button id="auth-submit" class="button button-primary button-wide btn-cognito" type="button" onclick="loginWithCognito()">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px;">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+    </svg>
+    Continue with Amazon Cognito
+  </button>
+
+  <!-- Note mới: Chứa câu giải thích dài -->
+  <p class="auth-note">
+    You will be securely redirected to Cognito to sign in or create an account.
+  </p>
+</div>
 
   <div id="app-view" class="app-view hidden">
     <aside id="sidebar" class="sidebar">
@@ -212,6 +222,7 @@
     </div>
   </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 
