@@ -1,0 +1,60 @@
+name: Frontend Deploy
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/frontend/**"
+      - ".github/workflows/frontend-deploy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-deploy:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.4"
+
+      - name: Terraform Init
+        working-directory: ./infrastructure/environments/dev
+        run: terraform init -input=false
+
+      - name: Read Terraform Outputs
+        working-directory: ./infrastructure/environments/dev
+        run: |
+          echo "FRONTEND_BUCKET=$(terraform output -raw frontend_bucket_name)" >> "$GITHUB_ENV"
+          echo "DISTRIBUTION_ID=$(terraform output -raw distribution_id)" >> "$GITHUB_ENV"
+          echo "COGNITO_DOMAIN=$(terraform output -raw auth_domain)" >> "$GITHUB_ENV"
+          echo "COGNITO_CLIENT_ID=$(terraform output -raw auth_client_id)" >> "$GITHUB_ENV"
+
+      - name: Generate Frontend Config
+        shell: bash
+        run: |
+          sed -i "s|__COGNITO_DOMAIN__|$COGNITO_DOMAIN|g" src/frontend/config.js
+          sed -i "s|__COGNITO_CLIENT_ID__|$COGNITO_CLIENT_ID|g" src/frontend/config.js
+
+      - name: Upload Frontend to S3
+        run: |
+          aws s3 sync ./src/frontend "s3://$FRONTEND_BUCKET" --delete
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/*"

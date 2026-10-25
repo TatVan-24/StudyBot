@@ -45,7 +45,7 @@ button {
 .auth-view {
     position: relative;
     min-height: 100vh;
-    background: url('/assets/backgrounds/trello_4k_8.jpg') center/cover fixed;
+    background: url('./assets/backgrounds/trello_4k_8.jpg') center/cover fixed;
     display: grid;
     place-items: center;
     padding: 42px
@@ -164,12 +164,13 @@ button {
     width: 100%;
     max-width: 440px;
     justify-self: end;
-    background: rgba(255, 255, 255, .94);
-    backdrop-filter: blur(22px);
-    border: 1px solid rgba(255, 255, 255, .72);
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    border: 1px solid rgba(255, 255, 255, 0.6);
     border-radius: 24px;
     padding: 34px;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, .32)
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255,255,255,0.8);
 }
 
 .mobile-brand {
@@ -1958,4 +1959,22 @@ body.is-local #debug-panel {
 }
 .session-delete {
     color: rgba(255, 255, 255, 0.4);
+}
+
+.btn-cognito {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    margin-top: 24px;
+    background: linear-gradient(135deg, #e67e22, #f39c12); /* Màu cam đậm hơn chút cho nổi bật */
+    box-shadow: 0 8px 20px rgba(230, 126, 34, 0.35);
+}
+
+.btn-cognito:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 25px rgba(230, 126, 34, 0.45);
 }
