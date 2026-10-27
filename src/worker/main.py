@@ -20,7 +20,6 @@ from src.rag_pipeline.llm.adapters.factory import make_ai, make_vector
 
 # --- INGEST JOB (Giữ nguyên) ---
 def _handle_ingest_job(job, dynamodb, s3_client, embedder, store) -> bool:
-    # (Giữ nguyên code cũ của bạn, không sửa gì)
     job_id = job["job_id"]
     document_id = job["document_id"]
     user_id = job.get("user_id")
@@ -43,8 +42,42 @@ def _handle_ingest_job(job, dynamodb, s3_client, embedder, store) -> bool:
     result = ingest_document(document_id, s3_key, s3_client, embedder, store, user_id)
     
     now_iso = datetime.now(timezone.utc).isoformat()
-    docs_table.update_item(Key={"document_id": document_id}, UpdateExpression="SET #s = :s, updated_at = :u", ExpressionAttributeNames={"#s": "status"}, ExpressionAttributeValues={":s": "ACTIVE", ":u": now_iso})
-    jobs_table.update_item(Key={"job_id": job_id}, UpdateExpression="SET #s = :s, #r = :r, updated_at = :u", ExpressionAttributeNames={"#s": "status", "#r": "result"}, ExpressionAttributeValues={":s": "COMPLETED", ":r": {"chunk_count": result["chunk_count"]}, ":u": now_iso})
+
+    # 1. Cập nhật Document -> ACTIVE
+    log_info(
+        "document_status_updating",
+        document_id=document_id,
+        status="ACTIVE",
+    )
+
+    response = docs_table.update_item(
+        Key={"document_id": document_id},
+        UpdateExpression="SET #s = :s, updated_at = :u",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={
+            ":s": "ACTIVE",
+            ":u": now_iso,
+        },
+    )
+
+    log_info(
+        "document_status_updated",
+        document_id=document_id,
+        status="ACTIVE",
+        dynamodb_response=response,
+    )
+
+    # 2. Cập nhật Job -> COMPLETED (Phần bị thiếu lúc nãy)
+    jobs_table.update_item(
+        Key={"job_id": job_id},
+        UpdateExpression="SET #s = :s, #r = :r, updated_at = :u",
+        ExpressionAttributeNames={"#s": "status", "#r": "result"},
+        ExpressionAttributeValues={
+            ":s": "COMPLETED",
+            ":r": {"chunk_count": result["chunk_count"]},
+            ":u": now_iso,
+        },
+    )
     log_info("job_completed", job_id=job_id)
     return True
 
