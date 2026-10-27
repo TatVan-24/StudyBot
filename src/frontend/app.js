@@ -1,11 +1,186 @@
-const API_BASE=(window.API_BASE||new URLSearchParams(location.search).get('api')||'').replace(/\/$/,'');
+const queryApiBase = new URLSearchParams(location.search).get('api');
+
+if (queryApiBase) {
+    sessionStorage.setItem('api_base', queryApiBase);
+}
+
+const API_BASE = (
+    window.API_BASE ||
+    queryApiBase ||
+    sessionStorage.getItem('api_base') ||
+    ''
+).replace(/\/$/, '');
 
 const COGNITO_CONFIG = {
     domain: window.STUDYBOT_CONFIG.cognitoDomain,
     clientId: window.STUDYBOT_CONFIG.clientId,
-    redirectUri: window.location.origin,
+    redirectUri: window.location.origin + window.location.pathname,
     scope: 'openid email profile'
 };
+
+function base64UrlEncode(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
+function generateRandomString(length = 64) {
+    const characters =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+
+    const randomValues = new Uint8Array(length);
+    crypto.getRandomValues(randomValues);
+
+    return Array.from(
+        randomValues,
+        value => characters[value % characters.length]
+    ).join('');
+}
+
+async function loginWithCognito() {
+    const state = generateRandomString();
+    const codeVerifier = generateRandomString();
+
+    const hash = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(codeVerifier)
+    );
+
+    const codeChallenge = base64UrlEncode(hash);
+
+    sessionStorage.setItem('oauth_state', state);
+    sessionStorage.setItem('oauth_code_verifier', codeVerifier);
+
+    const params = new URLSearchParams({
+        client_id: COGNITO_CONFIG.clientId,
+        response_type: 'code',
+        scope: COGNITO_CONFIG.scope,
+        redirect_uri: COGNITO_CONFIG.redirectUri,
+        state: state,
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256'
+    });
+
+    const authorizeUrl =
+        `https://${COGNITO_CONFIG.domain}.auth.ap-southeast-2.amazoncognito.com/oauth2/authorize?${params}`;
+
+    window.location.href = authorizeUrl;
+}
+
+async function handleCognitoCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const returnedState = params.get('state');
+
+    // Không phải OAuth callback
+    if (!code && !returnedState) {
+        return;
+    }
+
+    if (!code || !returnedState) {
+        console.error('Missing OAuth code or state');
+        return;
+    }
+
+    const savedState = sessionStorage.getItem('oauth_state');
+    const codeVerifier = sessionStorage.getItem('oauth_code_verifier');
+
+    // 1. Verify state
+    if (!savedState || returnedState !== savedState) {
+        console.error('OAuth state mismatch');
+        return;
+    }
+
+    // 2. PKCE verifier phải tồn tại
+    if (!codeVerifier) {
+        console.error('Missing PKCE code verifier');
+        return;
+    }
+
+    try {
+        const tokenUrl =
+            `https://${COGNITO_CONFIG.domain}.auth.ap-southeast-2.amazoncognito.com/oauth2/token`;
+
+        const body = new URLSearchParams({
+            grant_type: 'authorization_code',
+            client_id: COGNITO_CONFIG.clientId,
+            code: code,
+            redirect_uri: COGNITO_CONFIG.redirectUri,
+            code_verifier: codeVerifier
+        });
+
+        const response = await fetch(tokenUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: body.toString()
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Token exchange failed: ${response.status} ${errorText}`);
+        }
+
+        const tokens = await response.json();
+
+        console.log('Cognito tokens received');
+
+        // Lưu token tạm thời
+        sessionStorage.setItem(
+            'cognito_access_token',
+            tokens.access_token
+        );
+
+        sessionStorage.setItem(
+            'cognito_id_token',
+            tokens.id_token
+        );
+
+        if (tokens.refresh_token) {
+            sessionStorage.setItem(
+                'cognito_refresh_token',
+                tokens.refresh_token
+            );
+        }
+
+        // Không cần code/state nữa
+        sessionStorage.removeItem('oauth_state');
+        sessionStorage.removeItem('oauth_code_verifier');
+
+        // Xóa ?code=...&state=... khỏi URL
+        window.history.replaceState(
+            {},
+            document.title,
+            COGNITO_CONFIG.redirectUri
+        );
+
+        // Tạm thời tạo active user từ ID token
+        const payload = JSON.parse(
+            atob(
+                tokens.id_token
+                    .split('.')[1]
+                    .replace(/-/g, '+')
+                    .replace(/_/g, '/')
+            )
+        );
+
+        activeUser = {
+            id: payload.sub,
+            name: payload.name || (payload.email ? payload.email.split('@')[0] : 'Student'),
+            email: payload.email,
+            username: payload['cognito:username'] || payload.email
+        };
+
+        console.log('Authenticated user:', activeUser);
+
+        openApp();
+
+    } catch (error) {
+        console.error('Cognito callback failed:', error);
+    }
+}
 
 let authMode='login';
 let activeUser=null;
@@ -64,7 +239,7 @@ function logout(){
     setAuthMode('login');
     toast('You have been logged out.','info');
 }
-function openApp(){
+async function openApp(){
     if (IS_LOCAL) document.body.classList.add('is-local');
 
     $('auth-view').classList.add('hidden');
@@ -84,6 +259,7 @@ function openApp(){
     if (currentSessionId) {
         loadSession(currentSessionId);
     } else {
+        await createSession();
         showWelcomeCard();
     }
 }
@@ -94,8 +270,101 @@ function logDebug(label,data){
     if (!IS_LOCAL) return;
     const log=$('debug-log');const previous=log.textContent==='No requests yet.'?'':log.textContent;log.textContent=`── ${new Date().toLocaleTimeString()} — ${label} ──\n${JSON.stringify(data,null,2)}\n\n${previous}`.slice(0,12000)
 }
-async function apiCall(path,options={}){options.headers=Object.assign({'X-User-Id':userId()},options.headers||{});try{const response=await fetch(API_BASE+path,options);const text=await response.text();let body;try{body=JSON.parse(text)}catch{body=text}logDebug(`${options.method||'GET'} ${path}`,body);return {ok:response.ok,status:response.status,body}}catch(error){logDebug(`${options.method||'GET'} ${path}`,{error:error.message});return {ok:false,status:0,body:{detail:'Unable to reach the backend.'}}}}
-async function loadStatus(){const result=await apiCall('/health');if(!result.ok){$('status-pills').innerHTML='<span class="status-pill offline"><i class="status-dot"></i>Backend offline</span>';$('backend-state').innerHTML='<i class="status-dot offline"></i> Backend offline';return}const localValues=new Set(['local','sqlite']);$('status-pills').innerHTML=Object.entries(result.body.backends).map(([key,value])=>{const mode=localValues.has(value)?'local':'remote';return `<span class="status-pill ${mode}" title="${escapeHtml(value)}"><i class="status-dot"></i>${escapeHtml(key.toUpperCase())}</span>`}).join('');const isLocal=Object.values(result.body.backends).every(value=>localValues.has(value));$('backend-state').innerHTML=isLocal?'<i class="status-dot local"></i> Local development mode':'<i class="status-dot remote"></i> AWS services connected'}
+
+async function apiCall(path, options = {}) {
+    const accessToken = sessionStorage.getItem('cognito_access_token');
+
+    options.headers = Object.assign(
+        {
+            'Content-Type': 'application/json',
+            ...(accessToken
+                ? { 'Authorization': `Bearer ${accessToken}` }
+                : {})
+        },
+        options.headers || {}
+    );
+
+    try {
+        const response = await fetch(API_BASE + path, options);
+        const text = await response.text();
+
+        let body;
+        try {
+            body = JSON.parse(text);
+        } catch {
+            body = text;
+        }
+
+        logDebug(`${options.method || 'GET'} ${path}`, body);
+
+        return {
+            ok: response.ok,
+            status: response.status,
+            body
+        };
+    } catch (error) {
+        logDebug(`${options.method || 'GET'} ${path}`, {
+            error: error.message
+        });
+
+        return {
+            ok: false,
+            status: 0,
+            body: {
+                detail: 'Unable to reach the backend.'
+            }
+        };
+    }
+}
+
+async function loadStatus() {
+    const result = await apiCall('/sessions');
+
+    if (!result.ok) {
+        $('status-pills').innerHTML =
+            '<span class="status-pill offline">' +
+            '<i class="status-dot"></i>Backend offline</span>';
+
+        $('backend-state').innerHTML =
+            '<i class="status-dot offline"></i> Backend offline';
+
+        return;
+    }
+
+    $('status-pills').innerHTML =
+        '<span class="status-pill remote">' +
+        '<i class="status-dot"></i>AWS API</span>';
+
+    $('backend-state').innerHTML =
+        '<i class="status-dot remote"></i> AWS services connected';
+}
+
+async function createSession() {
+    const result = await apiCall('/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+            title: 'New Session'
+        })
+    });
+
+    if (!result.ok) {
+        console.error('Failed to create session:', result.status, result.body);
+        toast('Failed to create a new session.', 'error');
+        return null;
+    }
+
+    const session = result.body;
+    const sessionId = session.session_id || session.session?.session_id;
+
+    if (!sessionId) {
+        console.error('Session ID missing from response:', result.body);
+        toast('Invalid session response.', 'error');
+        return null;
+    }
+
+    saveSessionId(sessionId);
+    return sessionId;
+}
 
 const fileInput = $('file');
 fileInput.addEventListener('change', event => {
@@ -306,16 +575,30 @@ async function uploadFile(file) {
                 chip.className = 'upload-chip success';
                 chip.innerHTML = `
                     <span>✓ ${escapeHtml(file.name)} — ready</span>
-                    <button class="close" onclick="this.parentElement.remove()">×</button>
                 `;
             }
 
-            toast(`${file.name} is ready.`, 'success');
+            if (currentSessionId) {
+                const attachResult = await apiCall(
+                    `/sessions/${encodeURIComponent(currentSessionId)}/documents/${encodeURIComponent(documentId)}`,
+                    {
+                        method: 'POST'
+                    }
+                );
 
-            fileInput.value = '';
+                if (!attachResult.ok) {
+                    console.error(
+                        'Failed to attach document to session:',
+                        attachResult.status,
+                        attachResult.body
+                    );
+                    toast('Document is ready, but could not attach it to the session.', 'error');
+                    return false;
+                }
+            }
+
             refreshDocuments();
             loadSessions();
-
             return true;
         }
 
@@ -406,7 +689,7 @@ async function ask(){
     if(!question)return toast('Enter a question first.','warn');
 
     if (!currentSessionId) {
-        return toast('Vui lòng upload tài liệu trước khi hỏi.', 'warn');
+        return toast('Please upload your documents before asking.', 'warn');
     }
 
     hideWelcomeCard();
@@ -426,15 +709,15 @@ async function ask(){
     stream.appendChild(botMsg);
     stream.scrollTop = stream.scrollHeight;
 
-    const result=await apiCall('/query',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-            session_id: currentSessionId,
-            user_id: userId(),
-            query: question
-        })
-    });
+    const result=await apiCall(`/sessions/${encodeURIComponent(currentSessionId)}/questions`,
+        {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+                query: question
+            })
+        }
+    );
     $('ask-btn').disabled=false;
 
     if(!result.ok){
@@ -471,8 +754,8 @@ $('question').addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.
 let allDocs = [];
 
 async function refreshDocuments() {
-    const result = await apiCall('/docs/list');
-    allDocs = result.ok && Array.isArray(result.body.docs) ? result.body.docs : [];
+    const result = await apiCall('/documents');
+    allDocs = result.ok && Array.isArray(result.body.documents) ? result.body.documents : [];
     $('document-count').textContent = allDocs.length;
     renderDocs(allDocs);
 }
@@ -758,30 +1041,30 @@ async function pollDocumentStatus(documentId, chipId) {
                 return null;
             }
 
-            const document = result.body && result.body.document;
+            const documentData = result.body && result.body.document;
 
-            if (!document) {
+            if (!documentData) {
                 console.error('Document response missing document:', result.body);
                 toast('Invalid document status response.', 'error');
                 return null;
             }
 
-            const status = document.status;
+            const status = documentData.status;
 
             // --------------------------------------------------------
             // Terminal state: ingestion succeeded
             // --------------------------------------------------------
             if (status === 'ACTIVE') {
-                return document;
+                return documentData;
             }
 
             // --------------------------------------------------------
             // Terminal state: ingestion failed
             // --------------------------------------------------------
             if (status === 'FAILED') {
-                console.error('Document processing failed:', document);
+                console.error('Document processing failed:', documentData);
 
-                return document;
+                return documentData;
             }
 
             // --------------------------------------------------------
@@ -801,7 +1084,7 @@ async function pollDocumentStatus(documentId, chipId) {
 
                     chip.innerHTML = `
                         <i class="spinner"></i>
-                        <span>${escapeHtml(document.filename)} — ${statusText}</span>
+                        <span>${escapeHtml(documentData.filename)} — ${statusText}</span>
                     `;
                 }
 
@@ -848,4 +1131,15 @@ async function pollDocumentStatus(documentId, chipId) {
     return null;
 }
 
-restoreSession();
+// restoreSession();
+
+(async function initApp() {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.has('code') || params.has('state')) {
+        await handleCognitoCallback();
+        return;
+    }
+
+    restoreSession();
+})();
