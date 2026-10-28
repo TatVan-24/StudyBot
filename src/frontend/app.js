@@ -392,11 +392,11 @@ function enqueueFiles(files) {
     for (const f of files) {
         const ext = (f.name.split('.').pop() || '').toLowerCase();
         if (!allowed.includes(ext)) {
-            toast(`Bỏ qua ${f.name}: chỉ hỗ trợ PDF, TXT, MD`, 'warn');
+            toast(`Skipped ${f.name}: only PDF, TXT, MD are supported.`, 'warn');
             continue;
         }
         if (f.size > 10 * 1024 * 1024) {
-            toast(`Bỏ qua ${f.name}: vượt 10 MB`, 'warn');
+            toast(`Skipped ${f.name}: exceeds 10 MB.`, 'warn');
             continue;
         }
         valid.push(f);
@@ -410,12 +410,12 @@ function enqueueFiles(files) {
     const remaining = MAX_FILES_PER_SESSION - currentCount - pendingCount;
 
     if (remaining <= 0) {
-        toast(`Session đã đầy ${MAX_FILES_PER_SESSION} docs. Tạo session mới để upload thêm.`, 'warn');
+        toast(`Session is full (${MAX_FILES_PER_SESSION} docs). Create a new session to upload more.`, 'warn');
         return;
     }
 
     if (valid.length > remaining) {
-        toast(`Chỉ còn ${remaining} slot trong session. Chỉ xử lý ${remaining} file đầu.`, 'warn');
+        toast(`Only ${remaining} slots left in this session. Processing first ${remaining} files.`, 'warn');
         valid.length = remaining;
     }
 
@@ -733,7 +733,7 @@ async function ask(){
 
     if (status === 'rejection' && reason.toLowerCase().includes('session')) {
         clearSessionId();
-        toast('Session đã hết hạn. Vui lòng upload lại.', 'warn');
+        toast('Session has expired. Please upload again.', 'warn');
         showWelcomeCard();
         botMsg.remove();
         return;
@@ -771,8 +771,8 @@ function renderDocs(docsToRender) {
             <strong title="${escapeHtml(doc.filename || doc.doc_id)}">${escapeHtml(doc.filename || doc.doc_id)}</strong>
             <small>${Number(doc.chars || 0).toLocaleString()} characters · ${Number(doc.size || 0).toLocaleString()} bytes</small>
             <div style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; gap: 8px;">
-                <button onclick="detachDoc('${doc.doc_id}')" class="button compact" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047;" title="Detach from session">Gỡ</button>
-                <button onclick="deleteDocGlobal('${doc.doc_id}')" class="button compact" style="background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;" title="Delete permanently">Xóa</button>
+                <button onclick="detachDoc('${doc.document_id}')" class="button compact" style="background: #fef08a; color: #854d0e; border: 1px solid #fde047;" title="Detach from session">Detach</button>
+                <button onclick="deleteDocGlobal('${doc.document_id}')" class="button compact" style="background: #fee2e2; color: #991b1b; border: 1px solid #fecaca;" title="Delete permanently">Delete</button>
             </div>
         </article>
     `).join('');
@@ -785,11 +785,11 @@ function filterDocs() {
 }
 
 async function detachDoc(docId) {
-    if (!confirm('Gỡ tài liệu này khỏi session hiện tại? (Không xóa khỏi hệ thống)')) return;
+    if (!confirm('Detach this document from the current session? (It will not be deleted from the system)')) return;
     if (!currentSessionId) return toast('No active session.', 'error');
     const res = await apiCall('/docs/' + docId + '/detach?session_id=' + currentSessionId, { method: 'POST' });
     if (res.ok) {
-        toast('Đã gỡ tài liệu khỏi session', 'success');
+        toast('Document detached from session.', 'success');
         refreshDocuments();
     } else {
         toast('Lỗi: ' + (res.body?.detail || res.body?.reason || ''), 'error');
@@ -797,10 +797,10 @@ async function detachDoc(docId) {
 }
 
 async function deleteDocGlobal(docId) {
-    if (!confirm('Xóa vĩnh viễn tài liệu này khỏi hệ thống? (SQLite, Vector DB, Ổ đĩa)')) return;
+    if (!confirm('Permanently delete this document from the system? (SQLite, Vector DB, Disk)')) return;
     const res = await apiCall('/docs/' + docId, { method: 'DELETE' });
     if (res.ok) {
-        toast('Đã xóa vĩnh viễn tài liệu', 'success');
+        toast('Document permanently deleted.', 'success');
         refreshDocuments();
     } else {
         toast('Lỗi: ' + (res.body?.detail || res.body?.reason || ''), 'error');
