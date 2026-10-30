@@ -684,9 +684,92 @@ function newChat() {
     toast('New chat ready. Upload a document to start.', 'info');
 }
 
+const JOB_STATES = {
+    POLLING: 'POLLING',
+    SUCCESS: 'SUCCESS',
+    FAILED: 'FAILED',
+    HTTP_ERROR: 'HTTP_ERROR',
+    TIMEOUT: 'TIMEOUT'
+};
+
+function getJobState(response) {
+    // API request itself failed: 4xx / 5xx / unexpected HTTP status
+    if (!response.ok) {
+        return {
+            state: JOB_STATES.HTTP_ERROR,
+            response
+        };
+    }
+
+    const job = response.body;
+
+    if (!job || !job.status) {
+        return {
+            state: JOB_STATES.HTTP_ERROR,
+            error: 'Invalid job response: missing status'
+        };
+    }
+
+    // Job completed successfully
+    if (job.result) {
+        return {
+            state: JOB_STATES.SUCCESS,
+            job
+        };
+    }
+
+    // Job completed with an error
+    if (job.error_message) {
+        return {
+            state: JOB_STATES.FAILED,
+            job
+        };
+    }
+
+    // Any valid non-terminal job state
+    return {
+        state: JOB_STATES.POLLING,
+        job
+    };
+}
+
+async function pollJob(jobId, {
+    intervalMs = 2000,
+    timeoutMs = 60000
+} = {}) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+        const response = await apiCall(
+            `/jobs/${encodeURIComponent(jobId)}`
+        );
+
+        const result = getJobState(response);
+
+        if (result.state === JOB_STATES.SUCCESS) {
+            return result;
+        }
+
+        if (result.state === JOB_STATES.FAILED) {
+            return result;
+        }
+
+        if (result.state === JOB_STATES.HTTP_ERROR) {
+            return result;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+
+    return {
+        state: JOB_STATES.TIMEOUT,
+        error: `Job ${jobId} timed out after ${timeoutMs}ms`
+    };
+}
+
 async function ask(){
-    const question=$('question').value.trim();
-    if(!question)return toast('Enter a question first.','warn');
+    const question = $('question').value.trim();
+    if (!question) return toast('Enter a question first.', 'warn');
 
     if (!currentSessionId) {
         return toast('Please upload your documents before asking.', 'warn');
@@ -695,43 +778,115 @@ async function ask(){
     hideWelcomeCard();
 
     const stream = $('chat-stream');
+
     const userMsg = document.createElement('div');
     userMsg.className = 'chat-message user';
     userMsg.innerHTML = `<div class="message-bubble">${escapeHtml(question)}</div>`;
     stream.appendChild(userMsg);
 
     $('question').value = '';
-    $('ask-btn').disabled=true;
+    $('ask-btn').disabled = true;
 
     const botMsg = document.createElement('div');
     botMsg.className = 'chat-message bot';
-    botMsg.innerHTML = `<div class="message-bubble"><i class="spinner"></i> Reading your notes…</div>`;
+    botMsg.innerHTML = `
+        <div class="message-bubble">
+            <i class="spinner"></i> Reading your notes…
+        </div>
+    `;
     stream.appendChild(botMsg);
     stream.scrollTop = stream.scrollHeight;
 
-    const result=await apiCall(`/sessions/${encodeURIComponent(currentSessionId)}/questions`,
+    // Step 1: Create async answer job
+    const result = await apiCall(
+        `/sessions/${encodeURIComponent(currentSessionId)}/questions`,
         {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
                 query: question
             })
         }
     );
-    $('ask-btn').disabled=false;
 
-    if(!result.ok){
-        botMsg.innerHTML = `<div class="message-bubble upload-error">${escapeHtml(result.body.detail||'The request failed.')}</div>`;
+    if (!result.ok) {
+        $('ask-btn').disabled = false;
+
+        botMsg.innerHTML = `
+            <div class="message-bubble upload-error">
+                ${escapeHtml(result.body?.detail || 'The request failed.')}
+            </div>
+        `;
         return;
     }
 
-    const metadata = result.body.metadata || {};
+    const jobId = result.body?.job_id;
+
+    if (!jobId) {
+        $('ask-btn').disabled = false;
+
+        botMsg.innerHTML = `
+            <div class="message-bubble upload-error">
+                The server did not return a job ID.
+            </div>
+        `;
+        return;
+    }
+
+    // Step 2: Poll job until it reaches a terminal state
+    const jobResult = await pollJob(jobId);
+
+    $('ask-btn').disabled = false;
+
+    // Step 3: Handle polling/request failure
+    if (jobResult.state === JOB_STATES.HTTP_ERROR) {
+        const detail =
+            jobResult.response?.body?.detail ||
+            jobResult.error ||
+            'Failed to check the job status.';
+
+        botMsg.innerHTML = `
+            <div class="message-bubble upload-error">
+                ${escapeHtml(detail)}
+            </div>
+        `;
+        return;
+    }
+
+    if (jobResult.state === JOB_STATES.FAILED) {
+        const errorMessage =
+            jobResult.job?.error_message ||
+            'The request could not be completed.';
+
+        botMsg.innerHTML = `
+            <div class="message-bubble upload-error">
+                ${escapeHtml(errorMessage)}
+            </div>
+        `;
+        return;
+    }
+
+    if (jobResult.state === JOB_STATES.TIMEOUT) {
+        botMsg.innerHTML = `
+            <div class="message-bubble upload-error">
+                The request is taking longer than expected. Please try again later.
+            </div>
+        `;
+        return;
+    }
+
+    // Step 4: Job completed successfully
+    const metadata = jobResult.job.result || {};
+
     const status = metadata.status || 'acceptance';
     const answer = metadata.answer || '';
     const citations = metadata.citations || [];
     const reason = metadata.reason || '';
 
-    if (status === 'rejection' && reason.toLowerCase().includes('session')) {
+    if (
+        status === 'rejection' &&
+        reason.toLowerCase().includes('session')
+    ) {
         clearSessionId();
         toast('Session has expired. Please upload again.', 'warn');
         showWelcomeCard();
@@ -739,14 +894,45 @@ async function ask(){
         return;
     }
 
+    // Step 5: Existing rendering logic
     const badge = getStatusBadge(status);
 
     let citationsHtml = '';
+
     if (citations.length > 0) {
-        citationsHtml = '<div class="citations">' + citations.map((citation,index)=>`<article class="citation"><div class="citation-head"><span>Source ${citation.citation_id || index+1}</span><span class="score">score ${Number(citation.score||0).toFixed(1)}</span></div><div>${escapeHtml(citation.text||'Source reference')}</div></article>`).join('') + '</div>';
+        citationsHtml =
+            '<div class="citations">' +
+                citations.map((citation, index) => {
+                // Chỉ hiển thị score nếu Backend thực sự trả về
+                const scoreHtml = (citation.score != null)
+                    ? `<span class="score">score ${Number(citation.score).toFixed(2)}</span>`
+                    : '';
+
+                return `
+                <article class="citation">
+                    <div class="citation-head">
+                        <span>
+                            Source ${citation.citation_id || index + 1}
+                        </span>
+                        ${scoreHtml}
+                    </div>
+                    <div>
+                        ${escapeHtml(citation.text || 'Source reference')}
+                    </div>
+                </article>
+                `;
+            }).join('') +
+            '</div>';
     }
 
-    botMsg.innerHTML = `<div class="message-bubble">${badge}<div class="answer-text">${renderAnswer(answer)}</div>${citationsHtml}</div>`;
+    botMsg.innerHTML = `
+        <div class="message-bubble">
+            ${badge}
+            <div class="answer-text">${renderAnswer(answer)}</div>
+            ${citationsHtml}
+        </div>
+    `;
+
     stream.scrollTop = stream.scrollHeight;
     loadSessions();
 }
@@ -787,23 +973,30 @@ function filterDocs() {
 async function detachDoc(docId) {
     if (!confirm('Detach this document from the current session? (It will not be deleted from the system)')) return;
     if (!currentSessionId) return toast('No active session.', 'error');
-    const res = await apiCall('/docs/' + docId + '/detach?session_id=' + currentSessionId, { method: 'POST' });
+    const res = await apiCall(
+        '/sessions/' + encodeURIComponent(currentSessionId) +
+        '/documents/' + encodeURIComponent(docId),
+        { method: 'DELETE' }
+    );
     if (res.ok) {
         toast('Document detached from session.', 'success');
         refreshDocuments();
     } else {
-        toast('Lỗi: ' + (res.body?.detail || res.body?.reason || ''), 'error');
+        toast('Error: ' + (res.body?.detail || res.body?.reason || ''), 'error');
     }
 }
 
 async function deleteDocGlobal(docId) {
     if (!confirm('Permanently delete this document from the system? (SQLite, Vector DB, Disk)')) return;
-    const res = await apiCall('/docs/' + docId, { method: 'DELETE' });
+    const res = await apiCall(
+        '/documents/' + encodeURIComponent(docId),
+        { method: 'DELETE' }
+    );
     if (res.ok) {
         toast('Document permanently deleted.', 'success');
         refreshDocuments();
     } else {
-        toast('Lỗi: ' + (res.body?.detail || res.body?.reason || ''), 'error');
+        toast('Error: ' + (res.body?.detail || res.body?.reason || ''), 'error');
     }
 }
 
@@ -925,7 +1118,7 @@ async function loadSession(sessionId) {
 
     if (!result.ok) {
         clearSessionId();
-        toast('Session không tồn tại. Đã reset.', 'warn');
+        toast('Session does not exist. Reset.', 'warn');
         showWelcomeCard();
         loadSessions();
         return;
