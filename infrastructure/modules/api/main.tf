@@ -45,6 +45,7 @@ locals {
     "DELETE /documents/{id}"                   = "document"
     "POST /sessions"                           = "session"
     "GET /sessions"                            = "session"
+    "DELETE /sessions/{id}"                    = "session"
     "GET /sessions/{id}"                       = "session"
     "POST /sessions/{id}/documents/{doc_id}"   = "session"
     "DELETE /sessions/{id}/documents/{doc_id}" = "session"

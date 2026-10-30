@@ -36,6 +36,8 @@ def lambda_handler(event, context):
             return attach_document(user_id, session_id, doc_id)
         elif method == "DELETE" and session_id and doc_id:
             return detach_document(user_id, session_id, doc_id)
+        elif method == "DELETE" and session_id and not doc_id:
+            return delete_session(user_id, session_id)
         else:
             return error(f"Unsupported route or method: {method}", 400)
 
@@ -168,4 +170,59 @@ def detach_document(user_id, session_id, doc_id):
         "session_id": session_id,
         "document_id": doc_id,
         "detached": True
+    })
+
+def delete_session(user_id, session_id):
+    table_sessions = dynamodb.Table(TABLE_SESSIONS)
+
+    # 1. Verify session ownership
+    res_sess = table_sessions.get_item(
+        Key={"session_id": session_id}
+    )
+    session_item = res_sess.get("Item")
+
+    if not session_item:
+        return error("Session not found or unauthorized", 404)
+
+    if session_item.get("user_id") != user_id:
+        return error("Session not found or unauthorized", 404)
+
+    # 2. Delete all session-document associations
+    table_sess_docs = dynamodb.Table(TABLE_SESSION_DOCUMENTS)
+
+    res_docs = table_sess_docs.query(
+        KeyConditionExpression=Key("session_id").eq(session_id)
+    )
+
+    for item in res_docs.get("Items", []):
+        table_sess_docs.delete_item(
+            Key={
+                "session_id": session_id,
+                "document_id": item["document_id"],
+            }
+        )
+
+    # 3. Delete all messages belonging to the session
+    table_msgs = dynamodb.Table(TABLE_MESSAGES)
+
+    res_msgs = table_msgs.query(
+        KeyConditionExpression=Key("session_id").eq(session_id)
+    )
+
+    for item in res_msgs.get("Items", []):
+        table_msgs.delete_item(
+            Key={
+                "session_id": session_id,
+                "message_id": item["message_id"],
+            }
+        )
+
+    # 4. Delete session itself
+    table_sessions.delete_item(
+        Key={"session_id": session_id}
+    )
+
+    return success({
+        "status": "deleted",
+        "session_id": session_id,
     })
