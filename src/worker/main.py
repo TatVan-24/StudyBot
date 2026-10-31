@@ -8,7 +8,7 @@ import boto3
 from src.worker.config import (
     AWS_REGION, QUEUE_DOCUMENT_URL, QUEUE_INTERACTIVE_URL,
     TABLE_JOBS, TABLE_DOCUMENTS, TABLE_MESSAGES,
-    SQLITE_PATH, EMBEDDING_MODEL
+    SQLITE_PATH, EMBEDDING_MODEL, BUCKET_DOCUMENT
 )
 from src.worker.logger import log_info, log_warn, log_error
 from src.worker.ingest import ingest_document
@@ -81,6 +81,64 @@ def _handle_ingest_job(job, dynamodb, s3_client, embedder, store) -> bool:
     log_info("job_completed", job_id=job_id)
     return True
 
+
+def _handle_delete_job(job, dynamodb, s3_client, store) -> bool:
+    job_id = job["job_id"]
+    document_id = job["document_id"]
+    s3_key = job.get("s3_key")
+
+    docs_table = dynamodb.Table(TABLE_DOCUMENTS)
+    jobs_table = dynamodb.Table(TABLE_JOBS)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        store.delete_doc(document_id)
+
+        if s3_key:
+            s3_client.delete_object(
+                Bucket=BUCKET_DOCUMENT,
+                Key=s3_key,
+            )
+
+        docs_table.delete_item(
+            Key={"document_id": document_id}
+        )
+
+        jobs_table.update_item(
+            Key={"job_id": job_id},
+            UpdateExpression="SET #s = :s, #r = :r, updated_at = :u",
+            ExpressionAttributeNames={
+                "#s": "status",
+                "#r": "result",
+            },
+            ExpressionAttributeValues={
+                ":s": "COMPLETED",
+                ":r": {
+                    "document_id": document_id,
+                    "deleted": True,
+                },
+                ":u": now_iso,
+            },
+        )
+
+        log_info(
+            "document_deleted",
+            job_id=job_id,
+            document_id=document_id,
+            s3_key=s3_key,
+        )
+
+        return True
+
+    except Exception as e:
+        log_error(
+            "delete_document_failed",
+            job_id=job_id,
+            document_id=document_id,
+            error=str(e),
+        )
+        return False
 
 # --- ANSWER JOB (Viết mới hoàn toàn) ---
 def _handle_answer_job(job, dynamodb, ai_client, userstore, vector_store) -> bool:
@@ -159,6 +217,8 @@ def _process_message(message, queue_url, sqs, dynamodb, s3_client, embedder, sto
 
         if job_type == "INGEST_DOCUMENT":
             return _handle_ingest_job(job, dynamodb, s3_client, embedder, store)
+        elif job_type == "DELETE_DOCUMENT":
+            return _handle_delete_job(job, dynamodb, s3_client, store)
         elif job_type == "ANSWER_QUERY":
             return _handle_answer_job(job, dynamodb, ai_client, userstore, vector_store)
         else:
