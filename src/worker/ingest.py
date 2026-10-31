@@ -26,7 +26,11 @@ from src.worker.logger import log_info, log_warn, log_error
 from src.rag_pipeline.parser.pdf.pdf_adapter import (
     adapt_opendataloader_json_to_parsed_blocks,
 )
-from src.rag_pipeline.parser.text.txt_parser import build_blocks, to_parsed_blocks
+from src.rag_pipeline.parser.text.txt_parser import (
+    read_lines,
+    build_blocks,
+    to_parsed_blocks,
+)
 from src.rag_pipeline.chunker.chunker import get_chunker
 from src.rag_pipeline.indexer.schema import IndexMeta
 
@@ -39,6 +43,28 @@ def _download_pdf(s3_client, s3_key: str) -> Path:
     tmp_file = tempfile.NamedTemporaryFile(
         dir=temp_dir_path,
         suffix=".pdf",
+        delete=False,
+    )
+    tmp_path = Path(tmp_file.name)
+    tmp_file.close()
+
+    s3_client.download_file(
+        Bucket=BUCKET_DOCUMENT,
+        Key=s3_key,
+        Filename=str(tmp_path),
+    )
+    return tmp_path
+
+def _download_text(s3_client, s3_key: str) -> Path:
+    """Tải file text/markdown từ S3 về file tạm cục bộ."""
+    temp_dir_path = Path(TEMP_DIR)
+    temp_dir_path.mkdir(parents=True, exist_ok=True)
+
+    suffix = Path(s3_key).suffix.lower()
+
+    tmp_file = tempfile.NamedTemporaryFile(
+        dir=temp_dir_path,
+        suffix=suffix,
         delete=False,
     )
     tmp_path = Path(tmp_file.name)
@@ -98,6 +124,28 @@ def _parse_pdf_to_blocks(pdf_path: Path, document_id: str) -> list:
     log_info("parsed_with_pypdf", document_id=document_id, block_count=len(blocks))
     return blocks
 
+def _parse_text_to_blocks(
+    text_path: Path,
+    document_id: str,
+    source_type: str,
+) -> list:
+    """Phân tích TXT/Markdown bằng text parser dùng chung."""
+    lines = read_lines(text_path)
+    raw_blocks = build_blocks(lines)
+    blocks = to_parsed_blocks(
+        raw_blocks,
+        document_id,
+        source_type=source_type,
+    )
+
+    log_info(
+        "parsed_with_text_parser",
+        document_id=document_id,
+        source_type=source_type,
+        block_count=len(blocks),
+    )
+
+    return blocks
 
 def ingest_document(
     document_id: str,
@@ -108,7 +156,7 @@ def ingest_document(
     user_id: Optional[str] = None,
 ) -> dict:
     """Xử lý trọn gói 1 tài liệu: tải S3 -> parse PDF -> chunk -> embed -> lưu SQLite."""
-    pdf_path: Optional[Path] = None
+    temp_path: Optional[Path] = None
     try:
         if not user_id:
             parts = s3_key.split("/")
@@ -117,11 +165,25 @@ def ingest_document(
 
         log_info("ingest_started", document_id=document_id, s3_key=s3_key)
 
-        # 1. Tải PDF từ S3
-        pdf_path = _download_pdf(s3_client, s3_key)
+        # 1. Xác định loại tài liệu từ extension
+        source_type = Path(s3_key).suffix.lower().lstrip(".")
 
-        # 2. Parse PDF thành danh sách Blocks
-        blocks = _parse_pdf_to_blocks(pdf_path, document_id)
+        if source_type not in {"pdf", "txt", "md"}:
+            raise ValueError(
+                f"Unsupported document type: .{source_type}"
+            )
+
+        # 2. Download + parse theo loại tài liệu
+        if source_type == "pdf":
+            temp_path = _download_pdf(s3_client, s3_key)
+            blocks = _parse_pdf_to_blocks(temp_path, document_id)
+        else:
+            temp_path = _download_text(s3_client, s3_key)
+            blocks = _parse_text_to_blocks(
+                temp_path,
+                document_id,
+                source_type=source_type,
+            )
         if not blocks:
             log_error("no_blocks_produced", document_id=document_id)
             return {"chunk_count": 0}
@@ -131,7 +193,7 @@ def ingest_document(
         bundle = chunker.chunk(
             blocks=blocks,
             document_id=document_id,
-            source_type="pdf",
+            source_type=source_type,
             config=CHUNKER_CONFIG,
         )
         log_info("chunked", document_id=document_id, chunk_count=len(bundle.chunks))
@@ -170,18 +232,24 @@ def ingest_document(
         return {"chunk_count": len(bundle.chunks)}
 
     finally:
-        # Luôn dọn dẹp file PDF tạm
-        if pdf_path:
+        # Luôn dọn dẹp file tạm
+        if temp_path:
             try:
-                if pdf_path.exists():
-                    pdf_path.unlink()
+                if temp_path.exists():
+                    temp_path.unlink()
 
-                json_path = pdf_path.with_suffix(".json")
+                # Chỉ PDF/OpenDataLoader mới có JSON/images phụ.
+                json_path = temp_path.with_suffix(".json")
                 if json_path.exists():
                     json_path.unlink()
 
-                images_dir = pdf_path.parent / f"{pdf_path.stem}_images"
+                images_dir = temp_path.parent / f"{temp_path.stem}_images"
                 if images_dir.exists() and images_dir.is_dir():
                     shutil.rmtree(images_dir)
+
             except Exception as ex:
-                log_error("temp_cleanup_failed", file=str(pdf_path), error=str(ex))
+                log_error(
+                    "temp_cleanup_failed",
+                    file=str(temp_path),
+                    error=str(ex),
+                )
