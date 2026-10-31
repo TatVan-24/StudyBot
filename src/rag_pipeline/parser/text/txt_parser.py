@@ -154,7 +154,7 @@ def _parse_table_cells(text):
     return cells
 
 
-def to_parsed_blocks(raw_blocks, document_id):
+def to_parsed_blocks(raw_blocks, document_id, source_type="txt"):
     parsed_blocks = []
     heading_stack = []
     list_counter = 0
@@ -237,7 +237,7 @@ def to_parsed_blocks(raw_blocks, document_id):
             metadata = {}
 
         canonical_locator = {
-            "type": "txt",
+            "type": source_type,
             "start_line": raw["start_line"],
             "end_line": raw["end_line"],
         }
@@ -245,14 +245,18 @@ def to_parsed_blocks(raw_blocks, document_id):
             btype, text_content, metadata, block_heading_path
         )
         block_id = compute_block_id(
-            document_id, "txt", btype, canonical_locator, canonical_native_content
+            document_id,
+            source_type,
+            btype,
+            canonical_locator,
+            canonical_native_content,
         )
 
         parsed_blocks.append({
             "schema_version": "1.0",
             "document_id": document_id,
             "block_id": block_id,
-            "source_type": "txt",
+            "source_type": source_type,
             "block_index": idx,
             "source_order": idx,
             "block_type": btype,
@@ -260,7 +264,7 @@ def to_parsed_blocks(raw_blocks, document_id):
             "heading_path": block_heading_path,
             "related_asset_ids": [],
             "locator": {
-                "type": "txt",
+                "type": source_type,
                 "start_line": raw["start_line"],
                 "end_line": raw["end_line"],
             },
@@ -275,10 +279,14 @@ def to_parsed_blocks(raw_blocks, document_id):
 
 
 
-def parse_txt(file_path, document_id, output_dir):
+def parse_txt(file_path, document_id, output_dir, source_type="txt"):
     lines = read_lines(file_path)
     raw_blocks = build_blocks(lines)
-    blocks = to_parsed_blocks(raw_blocks, document_id)
+    blocks = to_parsed_blocks(
+        raw_blocks,
+        document_id,
+        source_type=source_type,
+    )
 
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
