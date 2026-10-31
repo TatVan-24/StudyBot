@@ -93,7 +93,13 @@ class SQLiteVectorStore:
                 )
             return None
 
-    def search(self, query_vector: np.ndarray, top_k: int = 5, filter_dict: Optional[Dict[str, Any]] = None) -> List[SearchResult]:
+    def search(
+        self,
+        query_vector: np.ndarray,
+        top_k: int = 5,
+        filter_dict: Optional[Dict[str, Any]] = None,
+        document_ids: Optional[List[str]] = None,
+    ) -> List[SearchResult]:
         # query_vector must be L2 normalized and have shape (dimension,)
         meta = self.load_meta()
         if meta is None:
@@ -104,16 +110,25 @@ class SQLiteVectorStore:
         with sqlite3.connect(self.db_path) as conn:
             # Columns: 0=chunk_id, 1=chunk_index, 2=document_id, 3=user_id, 4=session_id,
             #          5=text, 6=source_block_ids, 7=heading_context, 8=token_count, 9=vector
-            query = ("SELECT chunk_id, chunk_index, document_id, user_id, session_id, "
-                     "text, source_block_ids, heading_context, token_count, vector "
-                     "FROM embeddings")
+            query = (
+                "SELECT chunk_id, chunk_index, document_id, user_id, session_id, "
+                "text, source_block_ids, heading_context, token_count, vector "
+                "FROM embeddings"
+            )
+            conditions = []
             params = []
 
             if filter_dict:
-                conditions = []
                 for k, v in filter_dict.items():
                     conditions.append(f"{k} = ?")
                     params.append(v)
+
+            if document_ids:
+                placeholders = ", ".join("?" for _ in document_ids)
+                conditions.append(f"document_id IN ({placeholders})")
+                params.extend(document_ids)
+
+            if conditions:
                 query += " WHERE " + " AND ".join(conditions)
 
             cursor = conn.execute(query, params)
