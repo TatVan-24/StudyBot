@@ -247,9 +247,20 @@ def main():
     vector_store.vector_store = store
 
     original_search = vector_store.search
-    def patched_search(query, top_k=5, filter=None, session_id=None):
-        # Bỏ qua session_id, chỉ search theo document_id (nếu có)
-        return original_search(query, top_k=top_k, filter=filter, session_id=None)
+    def patched_search(
+        query,
+        top_k=5,
+        filter=None,
+        session_id=None,
+        document_ids=None,
+    ):
+        return original_search(
+            query,
+            top_k=top_k,
+            filter=filter,
+            session_id=None,
+            document_ids=document_ids,
+        )
     vector_store.search = patched_search
 
     queues = [QUEUE_INTERACTIVE_URL, QUEUE_DOCUMENT_URL]

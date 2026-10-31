@@ -6,8 +6,7 @@ Interface:
 """
 import re
 from collections import Counter
-from typing import Optional
-
+from typing import Any, Dict, List, Optional
 
 class BedrockKBVector:
     """Production: Bedrock Knowledge Base abstracts the vector store backend.
@@ -164,22 +163,24 @@ class LocalVector:
         top_k: int = 5,
         filter: Optional[dict] = None,
         session_id: Optional[str] = None,
+        document_ids: Optional[list[str]] = None,
     ) -> list:
         # 1. Embed query with same MPNet model
         query_vector = self.model.encode([query], normalize_embeddings=True)[0]
 
-        # 2. Build filter_dict — kết hợp session_id + extra filter từ caller
+        # 2. Build extra filters from caller.
+        # Do NOT use session_id as the retrieval scope because
+        # existing vector rows may have session_id=NULL.
         filter_dict: dict = {}
-        if session_id:
-            filter_dict["session_id"] = session_id
         if filter:
             filter_dict.update(filter)
 
-        # 3. Dense cosine search in SQLite (None nếu filter rỗng → backward compat)
+        # 3. Dense cosine search scoped to the session's ACTIVE document IDs.
         search_results = self.vector_store.search(
             query_vector,
             top_k=top_k,
             filter_dict=filter_dict if filter_dict else None,
+            document_ids=document_ids,
         )
 
         # 4. Format → API output contract: list[{text, doc_id, score, metadata}]

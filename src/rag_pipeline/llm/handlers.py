@@ -333,7 +333,7 @@ def handle_query(
         )
 
     # [2] Check session has docs
-    session_docs = userstore.get_session_docs(session_id)
+    session_docs = userstore.get_active_session_docs(session_id)
     if not session_docs:
         return _reject(
             answer="Session này chưa có tài liệu nào. Vui lòng upload tài liệu trước.",
@@ -350,7 +350,12 @@ def handle_query(
 
     # [4] Session-scoped retrieval
     t_ret = time.time()
-    chunks = vector_store.search(query, top_k=3, session_id=session_id)
+    chunks = vector_store.search(
+        query,
+        top_k=3,
+        session_id=session_id,
+        document_ids=session_docs,
+    )
     latency_retrieval = int((time.time() - t_ret) * 1000)
 
     # Remap chunk_id for validators

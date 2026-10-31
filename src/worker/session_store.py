@@ -1,6 +1,10 @@
 from datetime import datetime, timezone
 from boto3.dynamodb.conditions import Key
-from src.worker.config import TABLE_SESSIONS, TABLE_SESSION_DOCUMENTS
+from src.worker.config import (
+    TABLE_SESSIONS,
+    TABLE_SESSION_DOCUMENTS,
+    TABLE_DOCUMENTS,
+)
 
 class WorkerSessionStore:
     """Adapter đọc Session từ DynamoDB (thay vì SQLite local)."""
@@ -8,6 +12,7 @@ class WorkerSessionStore:
     def __init__(self, dynamodb):
         self.sessions_table = dynamodb.Table(TABLE_SESSIONS)
         self.session_docs_table = dynamodb.Table(TABLE_SESSION_DOCUMENTS)
+        self.documents_table = dynamodb.Table(TABLE_DOCUMENTS)
 
     def get_session(self, session_id: str, user_id: str) -> dict:
         # 1. Lấy session từ DynamoDB
@@ -42,3 +47,19 @@ class WorkerSessionStore:
             UpdateExpression="SET updated_at = :u",
             ExpressionAttributeValues={":u": now_iso}
         )
+
+    def get_active_session_docs(self, session_id: str) -> list:
+        document_ids = self.get_session_docs(session_id)
+
+        active_document_ids = []
+
+        for document_id in document_ids:
+            res = self.documents_table.get_item(
+                Key={"document_id": document_id}
+            )
+            document = res.get("Item")
+
+            if document and document.get("status") == "ACTIVE":
+                active_document_ids.append(document_id)
+
+        return active_document_ids
